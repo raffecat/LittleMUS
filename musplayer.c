@@ -517,50 +517,76 @@ static void key_on(int voice, int noteid, int note, int noteOfs, int note_att, i
     hw->mus_ch = mus_ch;                   // save mus_ch for key_off_mus
 }
 
+// re-use the oldest keyed off voice that already has
+// the instrument you need loaded (someties too aggressive
+// at re-using notes that are still in their 'release' phase)
+#undef REUSE_INSTRUMENTS
+#undef KILL_OLDEST
+
 static int choose_hw_voice(int ins_sel, int mus_ch, int noteid) {
-    int best_koff = -1;
-    int best_wait = 0x7FFFFFFF;
-    int released = -1;
-    int match_ins = -1;
-    // search for an idle or nearly-idle voice.
+    // prefers the oldest keyed-off voice,
+    // or failing that, the oldest voice.
+    int oldest_koff_seq = 0x7FFFFFFF;
+    int oldest_koff = -1;
+#ifdef REUSE_INSTRUMENTS
+    int oldest_reuse_seq = 0x7FFFFFFF;
+    int oldest_reuse = -1;
+#endif
+#ifdef KILL_OLDEST
+    int oldest_seq = 0x7FFFFFFF;
+    int oldest = 0;
+#endif
     for (int i = 0; i < num_voices; i++) {
+        int seq = hw_voices[i].seq;
+#ifdef KILL_OLDEST
+        if (seq < oldest_seq) {
+            // voice is the oldest.
+            oldest_seq = seq;
+            oldest = i;
+        }
+#endif
         if (hw_voices[i].noteid < 0) {
-            // voice is in release phase.
-            int wait = hw_voices[i].release - mus_time;
-            if (wait <= 0) {
-                // keyed off and released.
-                if (hw_voices[i].ins_sel == ins_sel) match_ins = i; // best case
-                else released = i; // last fully released channel
-            } else if (wait < best_wait) {
-                // keyed off, releasing.
-                best_wait = wait;
-                best_koff = i; // best keyed-off channel (minimum time remaining)
+            if (seq < oldest_koff_seq) {
+                // voice is the oldest keyed-off.
+                oldest_koff_seq = seq;
+                oldest_koff = i;
             }
+#ifdef REUSE_INSTRUMENTS
+            if (seq < oldest_reuse_seq && hw_voices[i].ins_sel == ins_sel) {
+                oldest_reuse_seq = seq;
+                oldest_reuse = i;
+            }
+#endif
         } else if (hw_voices[i].noteid == noteid && hw_voices[i].mus_ch == mus_ch) {
+            // voice is playing the same note (and double-voice)
             // noteid requires exact match for re-use (voice=0/1 in bit 8)
             printf("[MUS] #%d replaced note (%d) - double key-on\n", mus_ch, noteid);
             key_off_hw(i);
             return i; // found the same note already keyed on (replace it)
         }
     }
-    if (match_ins >= 0) return match_ins; // released channel, already configured.
-    if (released >= 0) return released;   // released channel, needs config.
-    if (best_koff >= 0) return best_koff; // keyed off channel with lowest remaining time.
-    // must steal a voice.
-    // XXX maybe just drop the note?
-    // if there's a short/quiet note playing, use the oldest?
-    // just cycle through them (prefer the oldest?)
-    int free = next_free;
-    next_free = (next_free + 1) & 7;
+#ifdef REUSE_INSTRUMENTS
+    if (oldest_reuse >= 0) return oldest_reuse; // oldest keyed-off channel with the same instrument.
+#endif
+    if (oldest_koff >= 0) return oldest_koff; // oldest keyed-off channel.
+#ifdef KILL_OLDEST
+    // use the oldest channel.
     // key-off the note if currently playing,
     // otherwise Adlib won't key-on the new note.
-    printf("[MUS] #%d killed note (%d) - overflow\n", hw_voices[free].mus_ch, hw_voices[free].noteid);
-    key_off_hw(free);
-    return free;
+    printf("[MUS] #%d killed note (%d) - overflow\n", hw_voices[oldest].mus_ch, hw_voices[oldest].noteid);
+    key_off_hw(oldest);
+    return oldest;
+#else
+    return -1;
+#endif
 }
 
 static void play_note(int ins_sel, int noteid, int note, int noteOfs, int note_att, int ch_att, int mus_ch, int bend) {
     int voice = choose_hw_voice(ins_sel, mus_ch, noteid);
+    if (voice < 0) {
+        printf("[HW] #%d DROPPED note (%d) %d\n", mus_ch, noteid, note);
+        return; // drop the note
+    }
     if (hw_voices[voice].ins_sel != ins_sel) {
         load_hw_instrument(&hw_voices[voice], voice, ins_sel);
     }
