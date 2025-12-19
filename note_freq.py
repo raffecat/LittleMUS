@@ -56,16 +56,13 @@ def adlib_freq(n,f):
 #  |   10   | 120 |121 |122 |123 |124 |125 |126 |127 |    |    |    |    |
 #  -----------------------------------------------------------------------
 
-A4_freq = 880
-A4_note = 69
+A4_freq = 440
+A4_note = 57
 
 def note_to_freq(note):
 	n = note - A4_note  # >0 if note > A4
 	freq = 2 ** (n/12) * A4_freq
 	return freq
-
-# ok it seems like musplayer is out by an octave in all the doom music,
-# bumping A4 up to 880..
 
 print("midi note frequency:")
 for n in range(0,128):
