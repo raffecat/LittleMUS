@@ -22,16 +22,16 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 With thanks to:
-• The DOSBox Team, OPL2/OPL3 emulation library
-• Ken Silverman, ADLIBEMU.C
-• https://github.com/rofl0r/woody-opl (opl.c)
-• https://doomwiki.org/wiki/MUS
-• https://moddingwiki.shikadi.net/wiki/MUS_Format
-• https://moddingwiki.shikadi.net/wiki/OP2_Bank_Format
-• https://cosmodoc.org/topics/adlib-functions/ !
-• https://www.doomworld.com/idgames/docs/editing/mus_form
-• https://www.phys.unsw.edu.au/jw/notes.html
-• id software, for giving us DOOM.
+* The DOSBox Team, OPL2/OPL3 emulation library
+* Ken Silverman, ADLIBEMU.C
+* https://github.com/rofl0r/woody-opl
+* https://doomwiki.org/wiki/MUS
+* https://moddingwiki.shikadi.net/wiki/MUS_Format
+* https://moddingwiki.shikadi.net/wiki/OP2_Bank_Format
+* https://cosmodoc.org/topics/adlib-functions/ !
+* https://www.doomworld.com/idgames/docs/editing/mus_form
+* https://www.phys.unsw.edu.au/jw/notes.html
+* id software, for giving us DOOM.
 */
 
 #include <stdint.h>
@@ -39,7 +39,8 @@ With thanks to:
 
 #include <stdio.h>
 
-#include "adlibemu.h"
+// This must be implemented by the program using musplayer.
+void adlib_write(int reg, int val);
 
 typedef uint8_t byte;
 
@@ -74,7 +75,7 @@ typedef struct __attribute__((packed)) MUS_voiceS {
     byte       modWaveSel;     // 0xE0 Modulator wave select
     byte       modScale;       // 0x40 Modulator key scaling (first two bits)
     byte       modLevel;       // 0x40 Modulator output level (last six bits)
-    byte       feedback;       // 0xC0 Feedback/connection
+    byte       feedback;       // 0xC0 Feedback/connection (low 4 bits)
     byte       carChar;        // 0x23 Carrier characteristic (Mult, KSR, EG, VIB and AM flags)
     byte       carAttack;      // 0x63 Carrier attack/decay level
     byte       carSustain;     // 0x83 Carrier sustain/release level
@@ -270,8 +271,9 @@ static uint16_t note_cmds[] = { // 256 bytes
 };
 
 enum constants {
-    num_voices = 9,
-    num_mus_channels = 16,
+    num_voices = 18,       // OPL2=9 OPL3=18
+    bank_two = 9,          // for OPL3
+    num_mus_channels = 16, // MUS file has 16 channels
 };
 
 typedef struct hw_voice_s {
@@ -322,8 +324,9 @@ MUS_instrument op2bank[175] = {0};  // ~6K
 
 static void key_off_hw(int hw_ch) {
     if (hw_voices[hw_ch].noteid >= 0) {
-        // printf("[HW] *%d key off\n", hw_ch);
-        adlib_write(0xb0+hw_ch, (hw_voices[hw_ch].hw_cmd >> 8) & 0xdf);  // clear bit 5 (key-off)
+        printf("[HW] *%d key off\n", hw_ch);
+        int B=0, ch = hw_ch; if (ch >= bank_two) { ch -= bank_two; B = 0x100; } // OPL3 2nd bank
+        adlib_write((B|0xb0)+ch, (hw_voices[hw_ch].hw_cmd >> 8) & 0xdf);  // clear bit 5 (key-off)
         hw_voices[hw_ch].noteid = -1;
         hw_voices[hw_ch].release = mus_time + 4; // release_time[hw_voices[hw_ch].rel];
         // XXX need to mark the channel as 'release' phase,
@@ -334,8 +337,9 @@ static void key_off_hw(int hw_ch) {
 
 static void silence_hw(int hw_ch) {
     // set release speed to maximum (instant)
-    adlib_write(0x80+chan_oper1[hw_ch], 15);  // sustain 0 release 15
-    adlib_write(0x80+chan_oper2[hw_ch], 15);  // sustain 0 release 15
+    int B=0, ch = hw_ch; if (ch >= bank_two) { ch -= bank_two; B = 0x100; } // OPL3 2nd bank
+    adlib_write((B|0x80)+chan_oper1[ch], 15);  // sustain 0 release 15
+    adlib_write((B|0x80)+chan_oper2[ch], 15);  // sustain 0 release 15
     key_off_hw(hw_ch);
     // loaded instrument is no longer valid
     hw_voices[hw_ch].ins_sel = -1;
@@ -372,26 +376,27 @@ static void silence_mus_all(int mus_ch) {
     }
 }
 
-static void load_hw_instrument(hw_voice_t* hw, int hwv, int ins_sel) {
+static void load_hw_instrument(hw_voice_t* hw, int hw_ch, int ins_sel) {
     int ins = ins_sel & 0xFF;
     int vi = ins_sel >> 8;
     if (ins >= 175) {
-        printf("[HW] *%d BAD instrument %d\n", hwv, ins);
+        printf("[HW] *%d BAD instrument %d\n", hw_ch, ins);
         return;
     }
     MUS_instrument* in = &op2bank[ins];
     MUS_voice* v = &in->voice[vi]; // voice index 0/1 in bit 8 of instrument selector
     //hw->rel = max((v->modSustain&15),(v->carSustain&15)); // max release rate
-    printf("[HW] *%d load instrument %d.%d ma %d md %d ca %d cd %d\n", hwv, ins, vi, (v->modAttack>>4), (v->modAttack&15), (v->carAttack>>4), (v->carAttack&15));
-    adlib_write(0x20+chan_oper1[hwv], v->modChar);     // Modulator AM, VIB, EG, KSR, Mult
-    adlib_write(0x60+chan_oper1[hwv], v->modAttack);   // Modulator attack, decay
-    adlib_write(0x80+chan_oper1[hwv], v->modSustain);  // Modulator sustain, release
-    adlib_write(0xE0+chan_oper1[hwv], v->modWaveSel);  // Modulator wave select
-    adlib_write(0xC0+hwv, v->feedback);                // Channel feedback, connection
-    adlib_write(0x20+chan_oper2[hwv], v->carChar);     // Carrier AM, VIB, EG, KSR, Mult
-    adlib_write(0x60+chan_oper2[hwv], v->carAttack);   // Carrier attack, decay
-    adlib_write(0x80+chan_oper2[hwv], v->carSustain);  // Carrier sustain, release
-    adlib_write(0xE0+chan_oper2[hwv], v->carWaveSel);  // Carrier wave select
+    printf("[HW] *%d load instrument %d.%d ma %d md %d ca %d cd %d\n", hw_ch, ins, vi, (v->modAttack>>4), (v->modAttack&15), (v->carAttack>>4), (v->carAttack&15));
+    int B=0, ch = hw_ch; if (ch >= bank_two) { ch -= bank_two; B = 0x100; } // OPL3 2nd bank
+    adlib_write((B|0x20)+chan_oper1[ch], v->modChar);     // Modulator AM, VIB, EG, KSR, Mult
+    adlib_write((B|0x60)+chan_oper1[ch], v->modAttack);   // Modulator attack, decay
+    adlib_write((B|0x80)+chan_oper1[ch], v->modSustain);  // Modulator sustain, release
+    adlib_write((B|0xE0)+chan_oper1[ch], v->modWaveSel);  // Modulator wave select
+    adlib_write((B|0xC0)+ch, v->feedback | 0x30);         // Channel feedback, connection (0x30 OPL3 channel routing)
+    adlib_write((B|0x20)+chan_oper2[ch], v->carChar);     // Carrier AM, VIB, EG, KSR, Mult
+    adlib_write((B|0x60)+chan_oper2[ch], v->carAttack);   // Carrier attack, decay
+    adlib_write((B|0x80)+chan_oper2[ch], v->carSustain);  // Carrier sustain, release
+    adlib_write((B|0xE0)+chan_oper2[ch], v->carWaveSel);  // Carrier wave select
     hw->ksl1 = v->modScale;                            // Modulator key scaling (top two bits)
     hw->ksl2 = v->carScale;                            // Carrier key scaling (top two bits)
     hw->lvl1 = v->modLevel;                            // Modulator output level (low six bits)
@@ -465,8 +470,9 @@ static void bend_channel(int mus_ch, int bend) {
         if (hw_voices[h].mus_ch == mus_ch && hw_voices[h].noteid >= 0) {
             hw_voice_t* hw = &hw_voices[h];
             int hw_cmd = bend_pitch(hw->hw_cmd, hw->p_note, bend, hw->fineTune);
-            adlib_write(0xa0+h, hw_cmd & 255); // frequency low 8 bits
-            adlib_write(0xb0+h, hw_cmd >> 8);  // frequency top 2 bits, octave (shift), key-on
+            int B=0, ch = h; if (ch >= bank_two) { ch -= bank_two; B = 0x100; } // OPL3 2nd bank
+            adlib_write((B|0xa0)+ch, hw_cmd & 255); // frequency low 8 bits
+            adlib_write((B|0xb0)+ch, hw_cmd >> 8);  // frequency top 2 bits, octave (shift), key-on
         }
     }
 }
@@ -475,40 +481,42 @@ static void update_volume(int mus_ch, int ch_att) {
     for (int h=0; h<num_voices; h++) {
         if (hw_voices[h].mus_ch == mus_ch) {
             hw_voice_t* hw = &hw_voices[h];
-            // frequency mode: operator 1 is modulator, phase-shifts operator 2.
+            // FM mode: operator 1 modulates frequency of operator 2.
             int v_att = (hw->note_att + ch_att);
             int att1 = hw->lvl1;
             int att2 = hw->lvl2 + v_att; if (att2 > 63) att2 = 63; else if (att2 < 0) att2 = 0;
             // additive mode: operator 1 is summed with operator 2.
             if (hw->sumMode) { att1 += v_att; if (att1 > 63) att1 = 63; else if (att1 < 0) att1 = 0; }
-            // printf("[HW] *%d update (%d) lvls %d %d %d #%d\n", h, hw->noteid, 63-att1, 63-att2, v_att, mus_ch);
-            adlib_write(0x40+chan_oper1[h], hw->ksl1|att1); // operator 1 attenuation + KSL
-            adlib_write(0x40+chan_oper2[h], hw->ksl2|att2); // operator 2 attenuation + KSL
+            printf("[HW] *%d update (%d) lvls %d %d %d #%d\n", h, hw->noteid, 63-att1, 63-att2, v_att, mus_ch);
+            int B=0, ch = h; if (ch >= bank_two) { ch -= bank_two; B = 0x100; } // OPL3 2nd bank
+            adlib_write((B|0x40)+chan_oper1[ch], hw->ksl1|att1); // operator 1 attenuation + KSL
+            adlib_write((B|0x40)+chan_oper2[ch], hw->ksl2|att2); // operator 2 attenuation + KSL
         }
     }
 }
 
-static void key_on(int voice, int noteid, int note, int noteOfs, int note_att, int ch_att, int mus_ch, int bend) {
-    //printf("[HW] *%d key on (%d) %d att -%d dB #%d\n", voice, noteid, note, (int)((note_att+ch_att) * 0.75), mus_ch);
-    hw_voice_t* hw = &hw_voices[voice];
+static void key_on(int hw_ch, int noteid, int note, int noteOfs, int note_att, int ch_att, int mus_ch, int bend) {
+    // printf("[HW] *%d key on (%d) %d att -%d dB #%d\n", voice, noteid, note, (int)((note_att+ch_att) * 0.75), mus_ch);
+    hw_voice_t* hw = &hw_voices[hw_ch];
     // "Attenuation = 24*d5 + 12*d4 + 6*d3 + 3*d2 + 1.5*d1 + 0.75*d0 (dB)" - Yamaha's YMF262 doc
-    // frequency mode: operator 1 is modulator, phase-shifts operator 2.
+    // FM mode: operator 1 modulates frequency of operator 2.
     int v_att = (note_att + ch_att);
     int att1 = hw->lvl1;
     int att2 = hw->lvl2 + v_att; if (att2 > 63) att2 = 63; else if (att2 < 0) att2 = 0;
     // additive mode: operator 1 is summed with operator 2.
     if (hw->sumMode) { att1 += v_att; if (att1 > 63) att1 = 63; else if (att1 < 0) att1 = 0; }
-    //printf("[HW] *%d key on (%d) %d lvls %d %d %d #%d\n", voice, noteid, note, 63-att1, 63-att2, -ch_att, mus_ch);
-    adlib_write(0x40+chan_oper1[voice], hw->ksl1|att1); // operator 1 attenuation + KSL
-    adlib_write(0x40+chan_oper2[voice], hw->ksl2|att2); // operator 2 attenuation + KSL
+    printf("[HW] *%d key on (%d) %d lvls %d %d %d #%d\n", hw_ch, noteid, note, 63-att1, 63-att2, -ch_att, mus_ch);
+    int B=0, ch = hw_ch; if (ch >= bank_two) { ch -= bank_two; B = 0x100; } // OPL3 2nd bank
+    adlib_write((B|0x40)+chan_oper1[ch], hw->ksl1|att1); // operator 1 attenuation + KSL
+    adlib_write((B|0x40)+chan_oper2[ch], hw->ksl2|att2); // operator 2 attenuation + KSL
     // set frequency, key-on note
     uint16_t hw_cmd = note_cmds[note + noteOfs] + hw->fineTune; // unclipped seems correct! (E1M2)
     if (bend) {
         // apply current pitch-bend
         hw_cmd = bend_pitch(hw_cmd, note + noteOfs, bend, hw->fineTune);
     }
-    adlib_write(0xa0+voice, hw_cmd & 255); // frequency low 8 bits
-    adlib_write(0xb0+voice, hw_cmd >> 8);  // 6 bits octave/key-on | 2 bits freq
+    adlib_write((B|0xa0)+ch, hw_cmd & 255); // frequency low 8 bits
+    adlib_write((B|0xb0)+ch, hw_cmd >> 8);  // 6 bits octave/key-on | 2 bits freq
     hw->seq = next_keyon_seq++;            // key-on sequence number (allow key-off oldest)
     hw->noteid = noteid;                   // save midi note for key_off (original key_on note)
     hw->note_att = note_att;               // key-on note attenuation (before controllers)
@@ -520,8 +528,15 @@ static void key_on(int voice, int noteid, int note, int noteOfs, int note_att, i
 // re-use the oldest keyed off voice that already has
 // the instrument you need loaded (someties too aggressive
 // at re-using notes that are still in their 'release' phase)
-#undef REUSE_INSTRUMENTS
+#define REUSE_INSTRUMENTS
 #undef KILL_OLDEST
+
+// model release time from sustain level (lerp) using Actual Time Tables.
+// 1. use the oldest keyed-off voice playing the same instrument (re-trigger),
+// 2. use any free (fully released) voice, based on time model;
+// 3. use any keyed-off 'almost silent' voice, based on time model;
+// 4. hijack keyed-off channel with the lowest level, based on time model;
+// 5. hijack the quietest playing note (lowest sustain level)
 
 static int choose_hw_voice(int ins_sel, int mus_ch, int noteid) {
     // prefers the oldest keyed-off voice,
@@ -553,12 +568,13 @@ static int choose_hw_voice(int ins_sel, int mus_ch, int noteid) {
             }
 #ifdef REUSE_INSTRUMENTS
             if (seq < oldest_reuse_seq && hw_voices[i].ins_sel == ins_sel) {
+                // voice is the oldest keyed-off with the same instrument.
                 oldest_reuse_seq = seq;
                 oldest_reuse = i;
             }
 #endif
         } else if (hw_voices[i].noteid == noteid && hw_voices[i].mus_ch == mus_ch) {
-            // voice is playing the same note (and double-voice)
+            // voice is playing the same note (and instrument-voice)
             // noteid requires exact match for re-use (voice=0/1 in bit 8)
             printf("[MUS] #%d replaced note (%d) - double key-on\n", mus_ch, noteid);
             key_off_hw(i);
@@ -573,10 +589,11 @@ static int choose_hw_voice(int ins_sel, int mus_ch, int noteid) {
     // use the oldest channel.
     // key-off the note if currently playing,
     // otherwise Adlib won't key-on the new note.
-    printf("[MUS] #%d killed note (%d) - overflow\n", hw_voices[oldest].mus_ch, hw_voices[oldest].noteid);
+    printf("[MUS] #%d KILLED note (%d) - overflow\n", hw_voices[oldest].mus_ch, hw_voices[oldest].noteid);
     key_off_hw(oldest);
     return oldest;
 #else
+    // drop the note.
     return -1;
 #endif
 }
@@ -788,6 +805,11 @@ int musplay_update(int ticks) {
                     if (loop_score) {
                         score = loop_score;
                         return 1; // still playing (ignore remaining ticks)
+                    } else {
+                        // key off all channels
+                        for (int i=0; i<num_voices; i++) {
+                            key_off_hw(i);
+                        }
                     }
                     return 0; // stopped
                 }
@@ -838,6 +860,8 @@ void musplay_play(char* data, int loop) {
     }
     // enable OPL2 features on the card
     adlib_write(0x01, 0x20);
+    // enable OPL3 second bank
+    adlib_write(0x105, 0x01);
     printf("\n\n\n[MUS] started playing\n");
 }
 
