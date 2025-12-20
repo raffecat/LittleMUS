@@ -6,6 +6,9 @@
 // The instrument data (175*36 bytes) is copied.
 void musplay_op2bank (char* data);
 
+// Set the player volume (0-127)
+void musplay_volume (int volume);
+
 // Start playing a MUS file.
 // Data must start with MUS_header ("MUS", 0x1A)
 // The song will loop if loop is non-zero.

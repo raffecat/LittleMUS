@@ -45,9 +45,6 @@ void adlib_write(int reg, int val);
 typedef uint8_t byte;
 
 // TO DO:
-// a few notes drop out
-// intro track is broken?
-// separate music output (so sfx work again..)
 // ctrl_bank_select
 // ctrl_modulation
 // ctrl_pan - stereo mix?
@@ -270,6 +267,31 @@ static uint16_t note_cmds[] = { // 256 bytes
   0,
 };
 
+
+// volume/attenuation tables
+// HW_level = clamp(20 · Σ k_i·log10(vol_i/100) / -0.75, 0, 63)
+// where k=2 for channel volume/expression and k=~3 for note velocity
+// see vol_ramp.py for details
+static int8_t att_log_square[128] = {
+    96, 96, 90, 81, 74, 69, 65, 61, 58, 55, 53, 51, 49, 47, 45, 43, 42, 41,
+    39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 27, 26, 25, 24, 24,
+    23, 23, 22, 21, 21, 20, 20, 19, 19, 18, 17, 17, 17, 16, 16, 15, 15, 14,
+    14, 13, 13, 13, 12, 12, 11, 11, 11, 10, 10, 9, 9, 9, 8, 8, 8, 7, 7, 7,
+    6, 6, 6, 6, 5, 5, 5, 4, 4, 4, 4, 3, 3, 3, 2, 2, 2, 2, 1, 1, 1, 1, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1, -1, -2, -2, -2, -2, -3, -3, -3, -3,
+    -3, -4, -4, -4, -4, -4, -4, -5, -5, -5
+};
+static int8_t att_log_cube[128] = {
+    96, 96, 96, 96, 96, 90, 84, 80, 76, 72, 69, 66, 63, 61, 59, 57, 55, 53,
+    51, 50, 48, 46, 45, 44, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32, 31,
+    30, 29, 29, 28, 27, 26, 26, 25, 24, 24, 23, 22, 22, 21, 20, 20, 19, 19,
+    18, 18, 17, 16, 16, 15, 15, 14, 14, 13, 13, 12, 12, 12, 11, 11, 10, 10,
+    9, 9, 9, 8, 8, 7, 7, 7, 6, 6, 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, -1, -1, -1, -2, -2, -2, -2, -3, -3, -3, -3, -4,
+    -4, -4, -4, -5, -5, -5, -5, -6, -6, -6, -6, -7
+};
+
+
 enum constants {
     num_voices = 18,       // OPL2=9 OPL3=18
     bank_two = 9,          // for OPL3
@@ -281,7 +303,7 @@ typedef struct hw_voice_s {
     int seq;                // note key-on sequence number (to key-off the oldest)
     int release;            // if non-zero, the release finish time
     int16_t noteid;         // MIDI note from the key-on command, for key-off (-1 if not playing)
-    int16_t note_att;       // key-on attenuation (for volume update)
+    int8_t note_att;        // key-on note attenuation level (for volume update)
     uint16_t hw_cmd;        // Last hw_cmd written to HW, for key-off
     byte p_note;            // Playing MIDI note, inc. noteOfs (for pitch bend)
     byte mus_ch;            // MUS channel that owns the playing note (-1 if not playing)
@@ -296,8 +318,8 @@ typedef struct hw_voice_s {
 typedef struct channel_s {
     byte mono;              // silence all notes when a new note is played
     byte last_vol;          // volume of the previous note played on the channel
-    int16_t vol_att;        // channel volume
-    int16_t exp_att;        // channel expression (volume with the range set by vol_att?)
+    int8_t vol_att;         // channel volume (attenuation level)
+    int8_t exp_att;         // channel expression (attenuation level)
     int8_t bend;            // channel pitch bend (+/- 127)
     byte ins_idx;           // selected MIDI instrument on this channel (index into op2bank)
     MUS_instrument* ins;    // selected instrument data
@@ -309,6 +331,7 @@ int delay = 0;
 int mus_time = 0;
 int next_free = 0;
 int next_keyon_seq = 1;
+int main_att = 0;
 mus_channel channels[num_mus_channels] = {0};
 hw_voice_t hw_voices[num_voices] = {0};
 MUS_instrument op2bank[175] = {0};  // ~6K
@@ -477,12 +500,16 @@ static void bend_channel(int mus_ch, int bend) {
     }
 }
 
+static inline int clamp(int v, int min_v, int max_v) {
+    return v >= min_v ? (v <= max_v ? v : max_v) : min_v;
+}
+
 static void update_volume(int mus_ch, int ch_att) {
     for (int h=0; h<num_voices; h++) {
         if (hw_voices[h].mus_ch == mus_ch) {
             hw_voice_t* hw = &hw_voices[h];
             // FM mode: operator 1 modulates frequency of operator 2.
-            int v_att = (hw->note_att + ch_att);
+            int v_att = clamp(main_att + hw->note_att + ch_att, 0, 63);
             int att1 = hw->lvl1;
             int att2 = hw->lvl2 + v_att; if (att2 > 63) att2 = 63; else if (att2 < 0) att2 = 0;
             // additive mode: operator 1 is summed with operator 2.
@@ -500,7 +527,7 @@ static void key_on(int hw_ch, int noteid, int note, int noteOfs, int note_att, i
     hw_voice_t* hw = &hw_voices[hw_ch];
     // "Attenuation = 24*d5 + 12*d4 + 6*d3 + 3*d2 + 1.5*d1 + 0.75*d0 (dB)" - Yamaha's YMF262 doc
     // FM mode: operator 1 modulates frequency of operator 2.
-    int v_att = (note_att + ch_att);
+    int v_att = clamp(main_att + note_att + ch_att, 0, 63);
     int att1 = hw->lvl1;
     int att2 = hw->lvl2 + v_att; if (att2 > 63) att2 = 63; else if (att2 < 0) att2 = 0;
     // additive mode: operator 1 is summed with operator 2.
@@ -640,18 +667,18 @@ static void mus_event(int ctrl, int value, int mus_ch, mus_channel* ch) {
             // this allows up to -27 negative attenuation
             // (I read somewhere that MUS allows >full volume)
             if (value > 127) value = 127; // must limit
-            ch->vol_att = (100 - value) / 2; // attenuation, div 2 to match HW range
+            ch->vol_att = att_log_square[value];
             printf("[MUS] #%d volume = %d\n", mus_ch, value);
-            update_volume(mus_ch, ch->vol_att); // use ch->exp clamped to vol?
+            update_volume(mus_ch, ch->vol_att + ch->exp_att);
             return;
         case ctrl_pan:           // Pan (balance): 0-left, 64-center (default), 127-right
             // printf("[MUS] #%d pan = %d\n", mus_ch, value);
             return;
         case ctrl_expression:    // Expression
             if (value > 127) value = 127; // must limit
-            ch->exp_att = (100 - value) / 2; // attenuation, div 2 to match HW range
+            ch->exp_att = att_log_square[value];
             printf("[MUS] #%d expression = %d\n", mus_ch, value);
-            update_volume(mus_ch, ch->vol_att); // use ch->exp clamped to vol?
+            update_volume(mus_ch, ch->vol_att + ch->exp_att);
             break;
         case ctrl_reverb:        // Reverb depth
             printf("[MUS] #%d REVERB = %d\n", mus_ch, value);
@@ -687,7 +714,7 @@ static void mus_event(int ctrl, int value, int mus_ch, mus_channel* ch) {
             if (ch->vol_att != 0 || ch->exp_att != 0) {
                 ch->vol_att = 0;
                 ch->exp_att = 0;
-                update_volume(mus_ch, ch->vol_att);
+                update_volume(mus_ch, ch->vol_att + ch->exp_att);
             }
             if (ch->bend != 0) {
                 ch->bend = 0;
@@ -739,7 +766,7 @@ int musplay_update(int ticks) {
                     // note volume, not real sure how this is handled in MUS
                     // (midi velocity / strike-intensity)
                     // tweaked this until the music sounds about right..
-                    int note_att = (100 - vol) / 4;
+                    int note_att = att_log_cube[vol];
                     int ch_att = ch->vol_att; // current volume attenuation (0.75 dB steps)
                     if (mus_ch==15) {
                         // notes 35-81 on #15 plays percussion instrument 135-181 (midi?)
@@ -830,6 +857,12 @@ int musplay_update(int ticks) {
 
 void musplay_op2bank(char* data) {
     memcpy(&op2bank, data, sizeof(op2bank));
+}
+
+void musplay_volume (int volume) {
+    if (volume > 127) volume = 127; // must limit
+    else if (volume < 0) volume = 0;
+    main_att = att_log_square[volume];
 }
 
 void musplay_play(char* data, int loop) {
