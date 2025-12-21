@@ -9,6 +9,8 @@ I wrote this a part of a source port of the original linuxdoom-1.10 release.
 At this stage it plays the DOOM and DOOM II "Sound Blaster" Adlib/OPL music
 with about 99% accuracy, compared to hardware recordings on YouTube.
 
+Try it out in [the OG DOOM](https://github.com/raffecat/OG-DOOM)
+
 
 ## Sample Rate
 
