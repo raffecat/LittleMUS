@@ -1,5 +1,5 @@
 /*
-Little MUS Player v0.1 (alpha, it's nearly there)
+Little MUS Player v0.2 (about 99% right in DOOM and DOOM II)
 
 Copyright 2025 Andrew Towers
 
@@ -347,7 +347,7 @@ MUS_instrument op2bank[175] = {0};  // ~6K
 
 static void key_off_hw(int hw_ch) {
     if (hw_voices[hw_ch].noteid >= 0) {
-        printf("[HW] *%d key off\n", hw_ch);
+        // printf("[HW] *%d key off\n", hw_ch);
         int B=0, ch = hw_ch; if (ch >= bank_two) { ch -= bank_two; B = 0x100; } // OPL3 2nd bank
         adlib_write((B|0xb0)+ch, (hw_voices[hw_ch].hw_cmd >> 8) & 0xdf);  // clear bit 5 (key-off)
         hw_voices[hw_ch].noteid = -1;
@@ -411,6 +411,9 @@ static void load_hw_instrument(hw_voice_t* hw, int hw_ch, int ins_sel) {
     //hw->rel = max((v->modSustain&15),(v->carSustain&15)); // max release rate
     printf("[HW] *%d load instrument %d.%d ma %d md %d ca %d cd %d\n", hw_ch, ins, vi, (v->modAttack>>4), (v->modAttack&15), (v->carAttack>>4), (v->carAttack&15));
     int B=0, ch = hw_ch; if (ch >= bank_two) { ch -= bank_two; B = 0x100; } // OPL3 2nd bank
+    // mute the channel first to avoid glitches (for real HW..)
+    adlib_write((B|0x40)+chan_oper1[ch], 63);             // operator 1 maximum attenuation, no KSL
+    adlib_write((B|0x40)+chan_oper2[ch], 63);             // operator 2 maximum attenuation, no KSL
     adlib_write((B|0x20)+chan_oper1[ch], v->modChar);     // Modulator AM, VIB, EG, KSR, Mult
     adlib_write((B|0x60)+chan_oper1[ch], v->modAttack);   // Modulator attack, decay
     adlib_write((B|0x80)+chan_oper1[ch], v->modSustain);  // Modulator sustain, release
@@ -514,7 +517,7 @@ static void update_volume(int mus_ch, int ch_att) {
             int att2 = hw->lvl2 + v_att; if (att2 > 63) att2 = 63; else if (att2 < 0) att2 = 0;
             // additive mode: operator 1 is summed with operator 2.
             if (hw->sumMode) { att1 += v_att; if (att1 > 63) att1 = 63; else if (att1 < 0) att1 = 0; }
-            printf("[HW] *%d update (%d) lvls %d %d %d #%d\n", h, hw->noteid, 63-att1, 63-att2, v_att, mus_ch);
+            // printf("[HW] *%d update (%d) lvls %d %d %d #%d\n", h, hw->noteid, 63-att1, 63-att2, v_att, mus_ch);
             int B=0, ch = h; if (ch >= bank_two) { ch -= bank_two; B = 0x100; } // OPL3 2nd bank
             adlib_write((B|0x40)+chan_oper1[ch], hw->ksl1|att1); // operator 1 attenuation + KSL
             adlib_write((B|0x40)+chan_oper2[ch], hw->ksl2|att2); // operator 2 attenuation + KSL
@@ -523,7 +526,6 @@ static void update_volume(int mus_ch, int ch_att) {
 }
 
 static void key_on(int hw_ch, int noteid, int note, int noteOfs, int note_att, int ch_att, int mus_ch, int bend) {
-    // printf("[HW] *%d key on (%d) %d att -%d dB #%d\n", voice, noteid, note, (int)((note_att+ch_att) * 0.75), mus_ch);
     hw_voice_t* hw = &hw_voices[hw_ch];
     // "Attenuation = 24*d5 + 12*d4 + 6*d3 + 3*d2 + 1.5*d1 + 0.75*d0 (dB)" - Yamaha's YMF262 doc
     // FM mode: operator 1 modulates frequency of operator 2.
@@ -532,7 +534,7 @@ static void key_on(int hw_ch, int noteid, int note, int noteOfs, int note_att, i
     int att2 = hw->lvl2 + v_att; if (att2 > 63) att2 = 63; else if (att2 < 0) att2 = 0;
     // additive mode: operator 1 is summed with operator 2.
     if (hw->sumMode) { att1 += v_att; if (att1 > 63) att1 = 63; else if (att1 < 0) att1 = 0; }
-    printf("[HW] *%d key on (%d) %d lvls %d %d %d #%d\n", hw_ch, noteid, note, 63-att1, 63-att2, -ch_att, mus_ch);
+    // printf("[HW] *%d key on (%d) %d lvls %d %d %d #%d\n", hw_ch, noteid, note, 63-att1, 63-att2, -ch_att, mus_ch);
     int B=0, ch = hw_ch; if (ch >= bank_two) { ch -= bank_two; B = 0x100; } // OPL3 2nd bank
     adlib_write((B|0x40)+chan_oper1[ch], hw->ksl1|att1); // operator 1 attenuation + KSL
     adlib_write((B|0x40)+chan_oper2[ch], hw->ksl2|att2); // operator 2 attenuation + KSL
