@@ -39,14 +39,14 @@ This is quite audible, if you (for example) call this once per video frame...
 ## OPL Emulator
 
 The library is set up for [Woody-OPL](https://github.com/rofl0r/woody-opl)
-which was extracted from [DOSBox](https://www.dosbox.com/wiki/Main_Page) before it changed over to [Nuked-OPL](https://github.com/nukeykt/Nuked-OPL3).
+which was extracted from [DOSBox](https://www.dosbox.com/wiki/Main_Page) before
+it changed over to [Nuked-OPL](https://github.com/nukeykt/Nuked-OPL3).
 
 Little MUS only calls a single function, `void adlib_write(int reg, int val)`,
 which you can instead define in your program to do anything you like.
 
-I tried it with Nuked-OPL (you can still use it by building with -DOPL_NUKED)
-but some of the notes didn't come out right at the limits, so I went back to
-woody-opl.
+I tried it with Nuked-OPL, but some of the notes didn't come out right at the
+limits, so I went back to woody-opl.
 
 
 ## Real OPL Hardware?
@@ -84,6 +84,12 @@ I used a lot of different references to put this together..
 * The DOSBox Team, OPL2/OPL3 emulation library
 * Ken Silverman, ADLIBEMU.C
 * id software, for giving us DOOM.
+
+
+## Building
+
+Drop the files into your project, maybe in a thirdparty directory.
+There's no build-system nonsense here.
 
 
 ## Library API
