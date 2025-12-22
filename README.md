@@ -64,6 +64,24 @@ to drop new notes rather than kill old notes, I'm still playing around
 with this part (it doesn't happen much on OPL3.)
 
 
+### Volume Control?
+
+I added a volume control, combined internally with the operator attenuation
+factors written to the OPL registers.
+
+There may be some problems with doing this:
+
+* It seems to change the "tone" of the instruments (perhaps it changes the height
+  of ADSR envelopes without changing attack/decay rates? not sure. it may only
+  be a problem with volumes > 100)
+* Some notes in the music score have their note volume (midi velocity) set to match
+  some other note that's already playing, and this can change their relative volumes.
+
+So I don't recommend using the player's volume control (leave it at the default 100),
+instead I recommend mixing the OPL output with your own (or the OS's) mixer to
+change volume.
+
+
 ## Hardware Recordings
 
 These are the hardware recordings on YouTube I've been using:
@@ -126,15 +144,17 @@ If you're a DOOM engine, you can get this data from the `GENMIDI` lump:
 void musplay_volume (int volume);
 ```
 
-Set the player volume (0-127, 100 = _full volume_)
+Set the player volume (0-127, 100 = full volume [>100 boosts])
 
 This is combined into the hardware attenuation levels written to the
 adlib registers in the OPL emulator.
 
-In other words, the generated samples will come out more loud or quiet.
+Note: I don't recommend using this, as it [seems to] affect the "tone"
+of some instruments and/or the relative level of the notes played
+(maybe only when volume > 100?)
 
-If volume is greater than 100, it will _boost_ the volume above the
-arranged level of the music, within the headroom available.
+Instead I recommend leaving this at the default (100) and using your own
+or the OS's mixer to change volume.
 
 
 ### _musplay_start_
