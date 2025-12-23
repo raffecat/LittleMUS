@@ -347,7 +347,7 @@ MUS_instrument op2bank[175] = {0};  // ~6K
 
 static void key_off_hw(int hw_ch) {
     if (hw_voices[hw_ch].noteid >= 0) {
-        // printf("[HW] *%d key off\n", hw_ch);
+        // printf("[MUS] *%d key off\n", hw_ch);
         int B=0, ch = hw_ch; if (ch >= bank_two) { ch -= bank_two; B = 0x100; } // OPL3 2nd bank
         adlib_write((B|0xb0)+ch, (hw_voices[hw_ch].hw_cmd >> 8) & 0xdf);  // clear bit 5 (key-off)
         hw_voices[hw_ch].noteid = -1;
@@ -403,13 +403,13 @@ static void load_hw_instrument(hw_voice_t* hw, int hw_ch, int ins_sel) {
     int ins = ins_sel & 0xFF;
     int vi = ins_sel >> 8;
     if (ins >= 175) {
-        printf("[HW] *%d BAD instrument %d\n", hw_ch, ins);
+        printf("[MUS] *%d BAD instrument %d\n", hw_ch, ins);
         return;
     }
     MUS_instrument* in = &op2bank[ins];
     MUS_voice* v = &in->voice[vi]; // voice index 0/1 in bit 8 of instrument selector
     //hw->rel = max((v->modSustain&15),(v->carSustain&15)); // max release rate
-    printf("[HW] *%d load instrument %d.%d ma %d md %d ca %d cd %d\n", hw_ch, ins, vi, (v->modAttack>>4), (v->modAttack&15), (v->carAttack>>4), (v->carAttack&15));
+    printf("[MUS] *%d load instrument %d-%d\n", hw_ch, ins, vi);
     int B=0, ch = hw_ch; if (ch >= bank_two) { ch -= bank_two; B = 0x100; } // OPL3 2nd bank
     // mute the channel first to avoid glitches (for real HW..)
     adlib_write((B|0x40)+chan_oper1[ch], 63);             // operator 1 maximum attenuation, no KSL
@@ -517,7 +517,7 @@ static void update_volume(int mus_ch, int ch_att) {
             int att2 = hw->lvl2 + v_att; if (att2 > 63) att2 = 63; else if (att2 < 0) att2 = 0;
             // additive mode: operator 1 is summed with operator 2.
             if (hw->sumMode) { att1 += v_att; if (att1 > 63) att1 = 63; else if (att1 < 0) att1 = 0; }
-            // printf("[HW] *%d update (%d) lvls %d %d %d #%d\n", h, hw->noteid, 63-att1, 63-att2, v_att, mus_ch);
+            // printf("[MUS] *%d update (%d) lvls %d %d %d #%d\n", h, hw->noteid, 63-att1, 63-att2, v_att, mus_ch);
             int B=0, ch = h; if (ch >= bank_two) { ch -= bank_two; B = 0x100; } // OPL3 2nd bank
             adlib_write((B|0x40)+chan_oper1[ch], hw->ksl1|att1); // operator 1 attenuation + KSL
             adlib_write((B|0x40)+chan_oper2[ch], hw->ksl2|att2); // operator 2 attenuation + KSL
@@ -534,7 +534,7 @@ static void key_on(int hw_ch, int noteid, int note, int noteOfs, int note_att, i
     int att2 = hw->lvl2 + v_att; if (att2 > 63) att2 = 63; else if (att2 < 0) att2 = 0;
     // additive mode: operator 1 is summed with operator 2.
     if (hw->sumMode) { att1 += v_att; if (att1 > 63) att1 = 63; else if (att1 < 0) att1 = 0; }
-    // printf("[HW] *%d key on (%d) %d lvls %d %d %d #%d\n", hw_ch, noteid, note, 63-att1, 63-att2, -ch_att, mus_ch);
+    // printf("[MUS] *%d key on (%d) %d lvls %d %d %d #%d\n", hw_ch, noteid, note, 63-att1, 63-att2, -ch_att, mus_ch);
     int B=0, ch = hw_ch; if (ch >= bank_two) { ch -= bank_two; B = 0x100; } // OPL3 2nd bank
     adlib_write((B|0x40)+chan_oper1[ch], hw->ksl1|att1); // operator 1 attenuation + KSL
     adlib_write((B|0x40)+chan_oper2[ch], hw->ksl2|att2); // operator 2 attenuation + KSL
@@ -630,7 +630,7 @@ static int choose_hw_voice(int ins_sel, int mus_ch, int noteid) {
 static void play_note(int ins_sel, int noteid, int note, int noteOfs, int note_att, int ch_att, int mus_ch, int bend) {
     int voice = choose_hw_voice(ins_sel, mus_ch, noteid);
     if (voice < 0) {
-        printf("[HW] #%d DROPPED note (%d) %d\n", mus_ch, noteid, note);
+        printf("[MUS] #%d DROPPED note (%d) %d\n", mus_ch, noteid, note);
         return; // drop the note
     }
     if (hw_voices[voice].ins_sel != ins_sel) {
@@ -655,11 +655,13 @@ static void mus_event(int ctrl, int value, int mus_ch, mus_channel* ch) {
             ch->ins = &op2bank[value];
             return;
         case ctrl_bank_select:   // Bank select: 0 by default
-            break;
+	    printf("[MUS] #%d bank select = %d\n", mus_ch, value);
+            return;
         case ctrl_modulation:    // Modulation (frequency vibrato depth)
-            printf("[MUS] #%d vibrato depth = %d\n", mus_ch, value);
+            // printf("[MUS] #%d vibrato depth = %d\n", mus_ch, value);
             // XXX this is a global HW setting; use this, or emulate it? what would PR do?
             // adlib_write(0xbd, (value & 1) << 6);    // Vibrato Depth (bit 6)  XXX using bit 0
+	    printf("[MUS] #%d modulation = %d\n", mus_ch, value);
             return;
         case ctrl_volume:        // Volume: 0-silent, ~100-normal, 127-loud
             // insight check: volume is attenuation (att = max - vol)
@@ -681,19 +683,19 @@ static void mus_event(int ctrl, int value, int mus_ch, mus_channel* ch) {
             ch->exp_att = att_log_square[value];
             printf("[MUS] #%d expression = %d\n", mus_ch, value);
             update_volume(mus_ch, ch->vol_att + ch->exp_att);
-            break;
+            return;
         case ctrl_reverb:        // Reverb depth
-            printf("[MUS] #%d REVERB = %d\n", mus_ch, value);
-            break;
+            printf("[MUS] #%d reverb = %d\n", mus_ch, value);
+            return;
         case ctrl_chorus:        // Chorus depth
-            printf("[MUS] #%d CHORUS = %d\n", mus_ch, value);
-            break;
+            printf("[MUS] #%d chorus = %d\n", mus_ch, value);
+            return;
         case ctrl_sustain:       // Sustain pedal (hold)
-            printf("[MUS] #%d SUSTAIN = %d\n", mus_ch, value);
-            break;
+            printf("[MUS] #%d sustain = %d\n", mus_ch, value);
+            return;
         case ctrl_soft:          // Soft pedal
-            printf("[MUS] #%d SOFT = %d\n", mus_ch, value);
-            break;
+            printf("[MUS] #%d soft = %d\n", mus_ch, value);
+            return;
 
         // SYSTEM messages
         // in midi these are "channel mode" (only affects one channel)
@@ -707,10 +709,10 @@ static void mus_event(int ctrl, int value, int mus_ch, mus_channel* ch) {
             return;
         case ctrl_mono:          // Mono (one note per channel)
             ch->mono = 1;
-            break;
+            return;
         case ctrl_poly:          // Poly (multiple notes per channel)
             ch->mono = 0;
-            break;
+            return;
         case ctrl_reset_all:     // Reset all controllers on this channel
             printf("[MUS] #%d reset all controllers\n", mus_ch);
             if (ch->vol_att != 0 || ch->exp_att != 0) {
