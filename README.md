@@ -1,15 +1,39 @@
-# Little MUS player
+# LittleMUS player
 
-Little MUS is a music player library for DMX MUS files/lumps used in the
+LittleMUS is a music player library for DMX MUS files/lumps used in the
 DOS versions of DOOM, DOOM II, Heretic, Hexen, Chex Quest, Raptor, Strife
 to play Adlib/OPL music.
 
+It aims for 100% accurate playback of the original "Sound Blaster" FM synth
+music (Adlib/OPL2) in DOOM and other games using DMX MUS music.
+
+At this stage it plays the DOOM and DOOM II Adlib/OPL2 music with about 99%
+accuracy compared to hardware recordings.
+
 I wrote this a part of a source port of the original linuxdoom-1.10 release.
+Try it out in [the OG, DOOM](https://github.com/raffecat/OG-DOOM)
 
-At this stage it plays the DOOM and DOOM II "Sound Blaster" Adlib/OPL music
-with about 99% accuracy, compared to hardware recordings on YouTube.
 
-Try it out in [the OG DOOM](https://github.com/raffecat/OG-DOOM)
+## Missing Features
+
+Right now I only know of one left to do:
+
+* LFO emulation, e.g. E1M8 uses the midi modulation controller to vary vibrato depth.
+  OPL2/3 hardware only has an on/off vibrato switch, so it's likely the original DMX player
+  generated its own scaled LFO and modified the operator pitch.
+
+And the following differences when used with Woody-OPL, which (I think) mostly come
+down to filtering:
+
+* Slight phase errors in E2M8, leading to different chorus "voicing". May be due
+  to the instantaneous nature of programming the OPL emulator, i.e. there's no register
+  programming skew. A low-pass filter would also shift phases a bit.
+* Pops in E1M5 also happen on real hardware, but to a lesser extent, likely due to
+  the presence of a low-pass filter.
+* Some differences in timbre, especially on high notes, could be due (again) to the
+  lack of a proper low-pass filter.
+
+I might look into adding a low-pass filter.
 
 
 ## Sample Rate
@@ -44,7 +68,7 @@ The library is set up for [Woody-OPL](https://github.com/rofl0r/woody-opl)
 which was extracted from [DOSBox](https://www.dosbox.com/wiki/Main_Page) before
 it changed over to [Nuked-OPL](https://github.com/nukeykt/Nuked-OPL3).
 
-Little MUS only calls a single function, `void adlib_write(int reg, int val)`,
+LittleMUS only calls a single function, `void adlib_write(int reg, int val)`,
 which you can instead define in your program to do anything you like.
 
 I tried it with Nuked-OPL, but some of the notes didn't come out right at the
