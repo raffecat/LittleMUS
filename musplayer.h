@@ -67,7 +67,7 @@ typedef struct mus_hw_voice_s {
     int16_t ins_sel;        // current instrument configured on the HW channel
     uint8_t ksl1, ksl2;     // current instrument KSL values (used to change operator volume)
     uint8_t lvl1, lvl2;     // current instrument Level values (used to change operator volume)
-    uint8_t sumMode;        // current instrument connection type (0=FM 1=Add)
+    uint8_t feedback;       // current instrument feedback/connection (low bit: 0=FM 1=Add)
     int8_t fineTune;        // current instrument fine tune (mus->fineTune / 2) - 64
 } mus_hw_voice_t;
 
@@ -78,6 +78,7 @@ typedef struct mus_channel_s {
     int8_t vol_att;         // channel volume (attenuation level)
     int8_t exp_att;         // channel expression (attenuation level)
     int8_t bend;            // channel pitch bend (+/- 127)
+    int8_t pan;             // channel panning control (0=L 64=C 127=R)
     uint8_t ins_idx;        // selected MIDI instrument on this channel (index into op2bank)
     MUS_instrument* ins;    // selected instrument data
 } mus_channel_t;
