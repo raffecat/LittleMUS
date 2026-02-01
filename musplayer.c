@@ -463,9 +463,9 @@ static void update_pan(musplayer_t* mp, int mus_ch, int pan) {
     for (int h=0; h<mus_num_voices; h++) {
         if (mp->hw_voices[h].mus_ch == mus_ch) {
             mus_hw_voice_t* hw = &mp->hw_voices[h];
-	    int B=0, ch = h; if (ch >= mus_bank_two) { ch -= mus_bank_two; B = 0x100; } // OPL3 2nd bank
-	    int pan_bits = pan <= 64-opl3_pan_threshold ? opl3_pan_left : (pan >= 64+opl3_pan_threshold ? opl3_pan_right : opl3_pan_centre);
-	    adlib_write(mp, (B|0xC0)+ch, hw->feedback | pan_bits); // channel pan + feedback + add/fm mode
+            int B=0, ch = h; if (ch >= mus_bank_two) { ch -= mus_bank_two; B = 0x100; } // OPL3 2nd bank
+            int pan_bits = pan <= 64-opl3_pan_threshold ? opl3_pan_left : (pan >= 64+opl3_pan_threshold ? opl3_pan_right : opl3_pan_centre);
+            adlib_write(mp, (B|0xC0)+ch, hw->feedback | pan_bits); // channel pan + feedback + add/fm mode
         }
     }
 }
@@ -474,7 +474,9 @@ static void key_on(musplayer_t* mp, int hw_ch, int noteid, int note, int noteOfs
     mus_hw_voice_t* hw = &mp->hw_voices[hw_ch];
     // "Attenuation = 24*d5 + 12*d4 + 6*d3 + 3*d2 + 1.5*d1 + 0.75*d0 (dB)" - Yamaha's YMF262 doc
     // FM mode: operator 1 modulates frequency of operator 2.
-    int v_att = clamp(mp->main_att + note_att + ch_att, 0, 63);
+    int pan_bits = pan <= 64-opl3_pan_threshold ? opl3_pan_left : (pan >= 64+opl3_pan_threshold ? opl3_pan_right : opl3_pan_centre);
+    int pan_att = pan_bits == opl3_pan_centre ? 10 : 0;
+    int v_att = clamp(mp->main_att + note_att + ch_att + pan_att, 0, 63);
     int att1 = hw->lvl1;
     int att2 = hw->lvl2 + v_att; if (att2 > 63) att2 = 63; else if (att2 < 0) att2 = 0;
     // additive mode: operator 1 is summed with operator 2.
@@ -484,7 +486,6 @@ static void key_on(musplayer_t* mp, int hw_ch, int noteid, int note, int noteOfs
     adlib_write(mp, (B|0x40)+chan_oper1[ch], hw->ksl1|att1); // operator 1 attenuation + KSL
     adlib_write(mp, (B|0x40)+chan_oper2[ch], hw->ksl2|att2); // operator 2 attenuation + KSL
     // channel panning
-    int pan_bits = pan <= 64-opl3_pan_threshold ? opl3_pan_left : (pan >= 64+opl3_pan_threshold ? opl3_pan_right : opl3_pan_centre);
     adlib_write(mp, (B|0xC0)+ch, hw->feedback | pan_bits); // channel pan + feedback + add/fm mode
     // set frequency, key-on note
     uint16_t hw_cmd = note_cmds[note + noteOfs] + hw->fineTune; // unclipped seems correct! (E1M2)
@@ -603,13 +604,13 @@ static void mus_event(musplayer_t* mp, int ctrl, int value, int mus_ch, mus_chan
             ch->ins = &mp->op2bank[value];
             return;
         case ctrl_bank_select:   // Bank select: 0 by default
-	    printf("[MUS] #%d bank select = %d\n", mus_ch, value);
+            printf("[MUS] #%d bank select = %d\n", mus_ch, value);
             return;
         case ctrl_modulation:    // Modulation (frequency vibrato depth)
             // printf("[MUS] #%d vibrato depth = %d\n", mus_ch, value);
             // XXX this is a global HW setting; use this, or emulate it? what would PR do?
             // adlib_write(0xbd, (value & 1) << 6);    // Vibrato Depth (bit 6)  XXX using bit 0
-	    printf("[MUS] #%d modulation = %d\n", mus_ch, value);
+            printf("[MUS] #%d modulation = %d\n", mus_ch, value);
             return;
         case ctrl_volume:        // Volume: 0-silent, ~100-normal, 127-loud
             // insight check: volume is attenuation (att = max - vol)
@@ -626,7 +627,7 @@ static void mus_event(musplayer_t* mp, int ctrl, int value, int mus_ch, mus_chan
         case ctrl_pan:           // Pan (balance): 0-left, 64-center (default), 127-right
             printf("[MUS] #%d pan = %d\n", mus_ch, value);
             ch->pan = value;
-            update_pan(mp, mus_ch, ch->pan);
+            // update_pan(mp, mus_ch, ch->pan);
             return;
         case ctrl_expression:    // Expression
             if (value > 127) value = 127; // must limit
@@ -720,7 +721,7 @@ int musplay_update(musplayer_t* mp, int ticks) {
                     // note volume, not real sure how this is handled in MUS
                     // (midi velocity / strike-intensity)
                     // tweaked this until the music sounds about right..
-                    int note_att = att_log_square[vol];
+                    int note_att = att_log_cube[vol];
                     int ch_att = ch->vol_att; // current volume attenuation (0.75 dB steps)
                     if (mus_ch==15) {
                         // notes 35-81 on #15 plays percussion instrument 135-181 (midi?)
@@ -791,7 +792,7 @@ int musplay_update(musplayer_t* mp, int ticks) {
                         for (int i=0; i<mus_num_voices; i++) {
                             key_off_hw(mp, i);
                         }
-			mp->score = 0; // ignore future updates
+                        mp->score = 0; // ignore future updates
                     }
                     return 0; // stopped
                 }
@@ -832,13 +833,14 @@ void musplay_start(musplayer_t* mp, char* data, int loop) {
     // clear all MUS channels
     memset(mp->channels, 0, sizeof(mp->channels));
     for (int m=0; m<mus_num_channels; m++) {
-        mp->channels[m].last_vol = 100;    // volume of prior note on the channel   XXX or 0?
+        mp->channels[m].last_vol = 0;          // volume of prior note on the channel
         mp->channels[m].ins = &mp->op2bank[0]; // must be a valid pointer
+        mp->channels[m].pan = 64;              // centre pan
     }
     // clear all HW channels
     memset(mp->hw_voices, 0, sizeof(mp->hw_voices));
     for (int h=0; h<mus_num_voices; h++) {
-        mp->hw_voices[h].noteid = -1;    // no note playing
+        mp->hw_voices[h].noteid = -1;  // no note playing
         mp->hw_voices[h].mus_ch = -1;  // no channel owner
         mp->hw_voices[h].ins_sel = -1; // no instrument selected
     }
@@ -857,7 +859,7 @@ void musplay_stop (musplayer_t* mp) {
     adlib_write(mp, 0xbd, 0); // stop rhythm instruments, clear rhythm mode, vibrato, tremelo
     for (int i=0; i<mus_num_voices; i++) {
         // silence_hw(i); // set release rates to max, and key-off
-	key_off_hw(mp, i);
+        key_off_hw(mp, i);
     }
     mp->score = 0;
 }
