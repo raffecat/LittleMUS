@@ -78,7 +78,7 @@ typedef struct mus_channel_s {
     int8_t vol_att;         // channel volume (attenuation level)
     int8_t exp_att;         // channel expression (attenuation level)
     int8_t bend;            // channel pitch bend (+/- 127)
-    int8_t pan;             // channel panning control (0=L 64=C 127=R)
+    int8_t pan_bits;        // channel panning bits (opl3_pan_centre etc)
     uint8_t ins_idx;        // selected MIDI instrument on this channel (index into op2bank)
     MUS_instrument* ins;    // selected instrument data
 } mus_channel_t;
