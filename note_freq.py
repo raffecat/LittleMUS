@@ -95,7 +95,11 @@ for n in range(0,128):
 	print(f"  {n} freq {freq}")
 
 print("\nadlib frequency selector:")
+print("  ", end='')
 for n in range(0,128):
 	f = note_to_freq(n)
 	k = adlib_freq(n,f)
-	print(f"  {k},")
+	print(f"{k}, ", end='')
+	if n%8 == 7:
+		print("\n  ", end='')
+print('')

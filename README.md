@@ -36,12 +36,8 @@ produces a decent downsampling at the requested sample-rate.
 Most of the games listed above assume a tick rate of 140 Hz (140 ticks per second)
 except for Raptor, which uses 70 Hz.
 
-The library requires your program to call `musplay_update(ticks)` at (or around)
-this rate to advance the music and issue register writes to the OPL emulator.
-Multiple ticks can be processed at once if necessary.
-
-Caution: if ticks are delayed too much, notes will play "out of place" in the music.
-This is quite audible, if you (for example) call this once per video frame...
+The library requires your program to call `musplay_tick()` at this rate
+to advance the music and issue register writes to the OPL emulator.
 
 
 ## OPL Emulator
@@ -207,7 +203,7 @@ Only one song can play at a time.
 The song will loop if loop is non-zero.
 
 This writes OPL registers (via `adlib_write`) to initialise the hardware.
-The first note will be produced later, when `musplay_update` is called.
+The first note will be produced later, when `musplay_tick` is called.
 
 If you're a DOOM engine, you receive this data via `I_RegisterSong`.
 
@@ -223,10 +219,10 @@ Stop playing the MUS file.
 This writes OPL registers (via `adlib_write`) to key-off all channels.
 
 
-### _musplay_update_
+### _musplay_tick_
 
 ```c
-int musplay_update (int ticks);
+int musplay_tick ();
 ```
 
 Advance time in 140 Hz ticks i.e. send 140 ticks per second (70 for Raptor.)
@@ -234,8 +230,6 @@ See the "Tick Rate" section above.
 
 This writes OPL registers by calling `void adlib_write(int reg, int val)`
 which must be implemented by the OPL emulator, or your program.
-
-This can be called unconditionally. It won't do anything unless a song is playing.
 
 Returns 1 if the music is still playing, or 0 if the music finished (looped tracks never finish.)
 

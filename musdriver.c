@@ -187,7 +187,7 @@ static int musdriver_advance( mus_driver_t* mp, uint32_t opl_frames_needed ) {
 		mp->until_tick = SAMPLES_PER_TICK;
 		if (mp->playing) {
 			// the music player calls adlib_write (above)
-			mp->playing = musplay_update(&mp->player, 1);
+			mp->playing = musplay_tick(&mp->player);
 		}
 	}
 	if (opl_frames_needed) {

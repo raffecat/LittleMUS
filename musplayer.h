@@ -56,13 +56,15 @@ typedef struct __attribute__((packed)) MUS_instrumentS {
 // private
 typedef struct mus_hw_voice_s {
     // playing note:
-    int seq;                // note key-on sequence number (to key-off the oldest)
-    int release;            // if non-zero, the release finish time
+    uint32_t kon_seq;       // key-on sequence (oldest key-on)
+    uint32_t koff_seq;      // key-off sequence (oldest key-off)
+    uint32_t release;       // if non-zero, the release end-time
     int16_t noteid;         // MIDI note from the key-on command, for key-off (-1 if not playing)
     int8_t note_att;        // key-on note attenuation level (for volume update)
-    uint16_t hw_cmd;        // Last hw_cmd written to HW, for key-off
-    uint8_t p_note;         // Playing MIDI note, inc. noteOfs (for pitch bend)
+    uint16_t hw_cmd;        // Last hw_cmd written to HW, for LFO and key-off (adjusted by pitch-bend)
+    uint8_t p_note;         // Playing MIDI note, including noteOfs (base note for pitch-bend)
     uint8_t mus_ch;         // MUS channel that owns the playing note (-1 if not playing)
+    uint8_t sw_vib;         // HW voice using software vibrato (modulated by mus_ch)
     // instrument config:
     int16_t ins_sel;        // current instrument configured on the HW channel
     uint8_t ksl1, ksl2;     // current instrument KSL values (used to change operator volume)
@@ -79,6 +81,8 @@ typedef struct mus_channel_s {
     int8_t exp_att;         // channel expression (attenuation level)
     int8_t bend;            // channel pitch bend (+/- 127)
     int8_t pan_bits;        // channel panning bits (opl3_pan_centre etc)
+    uint8_t modulation;     // channel modulation (att_lfo offset -> 12-byte loop)
+    uint8_t uses_mod;       // channel is using the modulation controller
     uint8_t ins_idx;        // selected MIDI instrument on this channel (index into op2bank)
     MUS_instrument* ins;    // selected instrument data
 } mus_channel_t;
@@ -93,9 +97,9 @@ typedef struct musplayer_s {
     uint8_t* loop_score;
     uint8_t* score;
     int delay;
-    int mus_time;
-    int next_free;
-    int next_keyon_seq;
+    uint32_t mus_time;
+    uint32_t next_kon;
+    int lfo_ofs;
     int main_att;
     mus_channel_t channels[mus_num_channels];
     mus_hw_voice_t hw_voices[mus_num_voices];
@@ -147,7 +151,7 @@ Only one song can play at a time.
 The song will loop if loop is non-zero.
 
 This writes OPL registers (via `adlib_write`) to initialise the hardware.
-The first note will be produced later, when `musplay_update` is called.
+The first note will be produced later, when `musplay_tick` is called.
 */
 void musplay_start (musplayer_t* player, char* data, int loop);
 
@@ -164,8 +168,6 @@ Advance time in 140 Hz ticks i.e. send 140 ticks per second (70 for Raptor)
 This writes OPL registers by calling `void adlib_write(int reg, int val)`
 which must be implemented by the OPL emulator, or your program.
 
-This can be called unconditionally. It won't do anything unless a song is playing.
-
 Returns 1 if the music is still playing, or 0 if the music finished (looped tracks never finish.)
 */
-int musplay_update (musplayer_t* player, int ticks);
+int musplay_tick (musplayer_t* player);
