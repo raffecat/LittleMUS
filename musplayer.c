@@ -342,35 +342,38 @@ static int bend_pitch(musplayer_t* mp, int note, int bend, int fineTune) {
         if (!fineTune) {
             return note_cmds[note] & opl3_mask_key_off; // current note (no key-on)
         }
-        int hw_cmd = note_cmds[note];                   // current base note
-        int scale = (hw_cmd >> 10) & 7;                 // 3-bit scale field
-        int freq = (hw_cmd & 1023) << scale;            // absolute freq (un-scale)
-        freq += fineTune;                               // add fineTune
-        if (freq >= (1024 << scale)) ++scale;           // go up an octave (drop another bit)
-        return (scale << 10)|(freq >> scale);           // re-encode A0|B0 hw_cmd (no key-on)
-    } else if (bend > 0) {                              // 1-127+ amount to bend up
-        while (bend >= 64) { bend -= 64; note += 1; }   // go up N halftones
-        int cmd = note_cmds[note];                      // current note
-        int freq = (cmd & 1023) << ((cmd >> 10) & 7);   // absolute freq (un-scale)
-        int next = note_cmds[++note];                   // next halftone above
-        int scale = (next >> 10) & 7;                   // 3-bit scale field
-        int higher_freq = (next & 1023) << scale;       // absolute freq
-        freq += ((higher_freq - freq) * bend) >> 6;     // add partial halftone
-        freq += fineTune;
-        if (freq >= (1024 << scale)) ++scale;           // go up an octave (drop another bit)
-        return (scale << 10)|(freq >> scale);           // re-encode A0|B0 hw_cmd (no key-on)
-    } else {                                            // bend < 0
-        bend = -bend;                                   // 1-127+ amount to bend down
-        while (bend >= 64) { bend -= 64; note -= 1; }   // go down N halftones
-        int cmd = note_cmds[note];                      // current note
-        int freq = (cmd & 1023) << ((cmd >> 10) & 7);   // absolute freq (un-scale)
-        int next = note_cmds[--note];                   // next halftone below
-        int scale = (next >> 10) & 7;                   // 3-bit scale field
-        int lower_freq = (next & 1023) << scale;        // absolute freq
-        freq -= ((freq - lower_freq) * bend) >> 6;      // subtract partial halftone
-        freq += fineTune;
-        if (freq >= (1024 << scale)) ++scale;           // go up an octave (drop another bit)
-        return (scale << 10)|(freq >> scale);           // re-encode A0|B0 hw_cmd (no key-on)
+        int hw_cmd = note_cmds[note];                     // current base note
+        // int freq = (hw_cmd & 1023) + fineTune;            // absolute freq (scaled)
+        // int scale = (hw_cmd >> 10) & 7;                   // 3-bit scale field
+        // if (freq >= 1024) { freq >>= 1; ++scale; }        // crosses into next octave (drop another bit)
+        // return (scale << 10)|freq;                        // re-encode A0|B0 hw_cmd (no key-on)
+        int scale = (hw_cmd >> 10) & 7;                   // 3-bit scale field
+        int freq = ((hw_cmd & 1023) + fineTune) << scale; // absolute freq (scaled)
+        if (freq >= 1024) ++scale;                        // crosses into next octave (drop another bit)
+        return (scale << 10)|(freq >> scale);             // re-encode A0|B0 hw_cmd (no key-on)
+    } else if (bend > 0) {                                // 1-127+ amount to bend up
+        while (bend >= 64) { bend -= 64; note += 1; }     // go up N halftones
+        int cmd = note_cmds[note];                        // current note (lower note)
+        int lscale = (cmd >> 10) & 7;                     // 3-bit scale field (lower scale)
+        int lfreq = ((cmd & 1023) + fineTune) << lscale;  // absolute freq (un-scale)
+        int next = note_cmds[++note];                     // next halftone above (higher note)
+        int hscale = (next >> 10) & 7;                    // 3-bit scale field (higher scale)
+        int hfreq = ((next & 1023) + fineTune) << hscale; // absolute freq (higher note)
+        lfreq += ((hfreq - lfreq) * bend) >> 6;           // add partial halftone
+        if (lfreq >= (1024 << hscale)) ++hscale;          // crosses into next octave (drop another bit)
+        return (hscale << 10)|(lfreq >> hscale);          // re-encode A0|B0 hw_cmd (no key-on)
+    } else {                                              // bend < 0
+        bend = -bend;                                     // 1-127+ amount to bend down
+        while (bend >= 64) { bend -= 64; note -= 1; }     // go down N halftones
+        int cmd = note_cmds[note];                        // current note (higher note)
+        int hscale = (cmd >> 10) & 7;                     // 3-bit scale field (higher scale)
+        int hfreq = ((cmd & 1023) + fineTune) << hscale;  // absolute freq (un-scale)
+        int next = note_cmds[--note];                     // next halftone below (lower note)
+        int lscale = (next >> 10) & 7;                    // 3-bit scale field (lower scale)
+        int lfreq = ((next & 1023) + fineTune) << lscale; // absolute freq (lower note)
+        hfreq -= ((hfreq - lfreq) * bend) >> 6;           // subtract partial halftone
+        if (hfreq >= (1024 << hscale)) ++hscale;          // crosses into next octave (drop another bit)
+        return (hscale << 10)|(hfreq >> hscale);          // re-encode A0|B0 hw_cmd (no key-on)
     }
 }
 
