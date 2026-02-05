@@ -420,7 +420,7 @@ static void update_volume(musplayer_t* mp, int mus_ch, int ch_att, int pan_bits)
     }
 }
 
-static void key_on(musplayer_t* mp, int hw_ch, int noteid, int note, int noteOfs, int note_att, int ch_att, int mus_ch, int bend, int pan_bits) {
+static int hw_pre_key_on(musplayer_t* mp, int hw_ch, int noteid, int note, int noteOfs, int note_att, int ch_att, int mus_ch, int bend, int pan_bits) {
     mus_hw_voice_t* hw = &mp->hw_voices[hw_ch];
     hw->note_att = note_att;        // key-on note attenuation (before controllers)
     hw->noteid = noteid;            // save midi note for key_off (original key_on note)
@@ -428,11 +428,15 @@ static void key_on(musplayer_t* mp, int hw_ch, int noteid, int note, int noteOfs
     hw->mus_ch = mus_ch;            // save mus_ch for key_off_mus
     hw->kon_seq = mp->next_kon++;   // key-on sequence (oldest key-on)
     set_hw_volume(mp, hw, hw_ch, ch_att, pan_bits);
-    uint16_t hw_cmd = bend_pitch(mp, note + noteOfs, bend, hw->fineTune) | opl3_key_on;
-    int B=0, ch = hw_ch; if (ch >= mus_bank_two) { ch -= mus_bank_two; B = 0x100; } // OPL3 2nd bank
+    return bend_pitch(mp, note + noteOfs, bend, hw->fineTune) | opl3_key_on;
+}
+
+static void hw_key_on(musplayer_t* mp, int voice, int hw_cmd) {
+    if (voice < 0) return; // a dropped note.
+    mp->hw_voices[voice].hw_cmd = hw_cmd;       // save last hw_cmd for pitch bend, modulation, key_off
+    int B=0, ch = voice; if (ch >= mus_bank_two) { ch -= mus_bank_two; B = 0x100; } // OPL3 2nd bank
     adlib_write(mp, (B|0xA0)+ch, hw_cmd & 255); // frequency low 8 bits
     adlib_write(mp, (B|0xB0)+ch, hw_cmd >> 8);  // key-on | 3-bit octave | 2-bit freq high
-    hw->hw_cmd = hw_cmd;                        // save last hw_cmd for pitch bend, modulation, key_off
 }
 
 // XXX out of date.
@@ -492,16 +496,24 @@ static int choose_hw_voice(musplayer_t* mp, int ins_sel, int mus_ch, int noteid)
     return lowest;
 }
 
-static void play_note(musplayer_t* mp, int ins_sel, int noteid, int note, int noteOfs, int note_att, int ch_att, int mus_ch, int bend, int pan) {
+typedef struct prep_s {
+    int voice;
+    int hw_cmd;
+} prep_t;
+
+static prep_t prep_note(musplayer_t* mp, int ins_sel, int noteid, int note, int noteOfs, int note_att, int ch_att, int mus_ch, int bend, int pan) {
     int voice = choose_hw_voice(mp, ins_sel, mus_ch, noteid);
     if (voice < 0) {
         printf("[MUS] #%d DROPPED note (%d) %d\n", mus_ch, noteid, note);
-        return; // drop the note
+        prep_t ret = { -1, 0 };
+        return ret; // drop the note.
     }
     if (mp->hw_voices[voice].ins_sel != ins_sel) {
         load_hw_instrument(mp, &mp->hw_voices[voice], voice, ins_sel, mus_ch);
     }
-    key_on(mp, voice, noteid, note, noteOfs, note_att, ch_att, mus_ch, bend, pan);
+    int hw_cmd = hw_pre_key_on(mp, voice, noteid, note, noteOfs, note_att, ch_att, mus_ch, bend, pan);
+    prep_t ret = { voice, hw_cmd };
+    return ret;
 }
 
 static void mus_event(musplayer_t* mp, int ctrl, int value, int mus_ch, mus_channel_t* ch) {
@@ -679,29 +691,35 @@ int musplay_tick(musplayer_t* mp) {
                         int ins_sel = 128-35+note; // percussion bank starts at 128
                         MUS_instrument* ins = &mp->op2bank[ins_sel];
                         // yeah these can't use noteOfs, otherwise it breaks a bunch of tunes
-                        play_note(mp, ins_sel, note, ins->noteNum, 0, note_att, ch_att, mus_ch, ch->bend, ch->pan_bits); // ins->voice[0].noteOfs
+                        prep_t p0 = prep_note(mp, ins_sel, note, ins->noteNum, 0, note_att, ch_att, mus_ch, ch->bend, ch->pan_bits); // ins->voice[0].noteOfs
                         if (ins->flags & musf_double_voice) {
                             // double-voice note: voice=1 in bit 8 of ins_sel and noteid
-                            play_note(mp, ins_sel|(1<<8), note|(1<<8), ins->noteNum, 0, note_att, ch_att, mus_ch, ch->bend, ch->pan_bits); // ins->voice[1].noteOfs
+                            prep_t p1 = prep_note(mp, ins_sel|(1<<8), note|(1<<8), ins->noteNum, 0, note_att, ch_att, mus_ch, ch->bend, ch->pan_bits); // ins->voice[1].noteOfs
+                            hw_key_on(mp, p1.voice, p1.hw_cmd);
                         }
+                        hw_key_on(mp, p0.voice, p0.hw_cmd);
                     }
                 } else {
                     MUS_instrument* ins = ch->ins;
                     int ins_sel = ch->ins_idx; // instrument selector: voice=0 in bit 8
                     if (ins->flags & musf_fixed_note) {
                         // play a fixed note, ignoring noteOfs (as per format doc)
-                        play_note(mp, ins_sel, note, ins->noteNum, 0, note_att, ch_att, mus_ch, ch->bend, ch->pan_bits); // noteOfs=0
+                        prep_t p0 = prep_note(mp, ins_sel, note, ins->noteNum, 0, note_att, ch_att, mus_ch, ch->bend, ch->pan_bits); // noteOfs=0
                         if (ins->flags & musf_double_voice) {
                             // double-voice note: voice=1 in bit 8 of ins_sel and noteid
-                            play_note(mp, ins_sel|(1<<8), note|(1<<8), ins->noteNum, 0, note_att, ch_att, mus_ch, ch->bend, ch->pan_bits); // noteOfs=0
+                            prep_t p1 = prep_note(mp, ins_sel|(1<<8), note|(1<<8), ins->noteNum, 0, note_att, ch_att, mus_ch, ch->bend, ch->pan_bits); // noteOfs=0
+                            hw_key_on(mp, p1.voice, p1.hw_cmd);
                         }
+                        hw_key_on(mp, p0.voice, p0.hw_cmd);
                     } else {
                         // play a normal note.
-                        play_note(mp, ins_sel, note, note, ins->voice[0].noteOfs, note_att, ch_att, mus_ch, ch->bend, ch->pan_bits);
+                        prep_t p0 = prep_note(mp, ins_sel, note, note, ins->voice[0].noteOfs, note_att, ch_att, mus_ch, ch->bend, ch->pan_bits);
                         if (ins->flags & musf_double_voice) {
                             // double-voice note: voice=1 in bit 8 of ins_sel and noteid
-                            play_note(mp, ins_sel|(1<<8), note|(1<<8), note, ins->voice[1].noteOfs, note_att, ch_att, mus_ch, ch->bend, ch->pan_bits);
+                            prep_t p1 = prep_note(mp, ins_sel|(1<<8), note|(1<<8), note, ins->voice[1].noteOfs, note_att, ch_att, mus_ch, ch->bend, ch->pan_bits);
+                            hw_key_on(mp, p1.voice, p1.hw_cmd);
                         }
+                        hw_key_on(mp, p0.voice, p0.hw_cmd);
                     }
                 }
                 // printf("[MUS] #%d play %d vol %d\n", chan, note, vol);
