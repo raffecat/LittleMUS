@@ -268,7 +268,7 @@ static void load_hw_instrument(musplayer_t* mp, mus_hw_voice_t* hw, int hw_ch, i
     }
     MUS_instrument* in = &mp->op2bank[ins];
     MUS_voice* v = &in->voice[vi]; // voice index 0/1 in bit 8 of instrument selector
-    printf("[MUS] *%d load instrument %d-%d\n", hw_ch, ins, vi);
+    // printf("[MUS] *%d load instrument %d-%d\n", hw_ch, ins, vi);
     uint8_t modChar = v->modChar;
     uint8_t carChar = v->carChar;
     // software vibrato
@@ -487,8 +487,8 @@ static int choose_hw_voice(musplayer_t* mp, int ins_sel, int mus_ch, int noteid)
         }
     }
     if (oldest_reuse >= 0) { return oldest_reuse; } // oldest fully keyed-off channel with the same instrument.
-    if (oldest_idle >= 0) { printf("[MUS] *%d oldest idle\n", oldest_idle); return oldest_idle; } // oldest fully keyed-off channel.
-    if (oldest_koff >= 0) { printf("[MUS] *%d oldest koff (not idle)\n", oldest_koff); return oldest_koff; } // oldest keyed-off channel.
+    if (oldest_idle >= 0) { return oldest_idle; } // oldest fully keyed-off channel.
+    if (oldest_koff >= 0) { return oldest_koff; } // oldest keyed-off channel.
     // steal the lowest priority channel.
     // key-off the voice, otherwise OPL HW won't see a key-on.
     printf("[MUS] *%d KILLED #%d - overflow\n", lowest, mp->hw_voices[lowest].mus_ch);
@@ -614,7 +614,7 @@ static void mus_event(musplayer_t* mp, int ctrl, int value, int mus_ch, mus_chan
             ch->mono = 0;        // is POLY the default?
             return;
     }
-    printf("[MUS] #%d controller %d = %d\n", mus_ch, ctrl, value);
+    printf("[MUS] #%d unknown controller %d = %d\n", mus_ch, ctrl, value);
 }
 
 static void do_lfo(musplayer_t* mp) {
