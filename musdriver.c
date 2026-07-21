@@ -91,7 +91,7 @@ static inline int16_t musdriver_downsample_step(mus_driver_t* mp, lpf_resample_t
 		}
 		*inSize += OPL_CHANNELS;
 	    }
-	    float samp = (float)(in[rs->inN]) * volume;
+	    float samp = (float)(in[rs->inN]);
 	    rs->inN += OPL_CHANNELS;
 
             // 1st-order LPF
@@ -105,7 +105,7 @@ static inline int16_t musdriver_downsample_step(mus_driver_t* mp, lpf_resample_t
         rs->mu += rs->inc;
 
 	// quantize
-	int iy = (int)y;
+	int iy = (int)(y * volume);
 
 	// clipping
         if (iy > 0x7fff) {
