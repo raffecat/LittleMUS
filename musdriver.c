@@ -27,7 +27,6 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <math.h>
 #include <string.h>
 
-#define PI 3.1415926535897932384626433832795f
 
 // Hardware OPL chip clockrate (samplerate)
 #define OPL_CLOCKRATE		49716
@@ -44,32 +43,22 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 // Number of channels Nuked-OPL generates (always 2)
 #define OPL_CHANNELS 2
 
-//static music_player mus_player = {0};
+// Q factor for Butterworth LPF (~0.707)
+// use 0.6 to boost the low end a bit
+#define OPL_BIQUAD_Q 0.6
 
 
 // Called by LittleMUS to write to Nuked-OPL3.
 void adlib_write( musplayer_t* mp, int reg, int val ) {
     mus_driver_t* driver = (mus_driver_t*) mp;
-
     OPL3_WriteRegBuffered(&driver->opl3, reg, val);
-
-    // queue up the reg write
-    //if (driver->wr_pos >= mus_max_regs) {
-    //    return; // buffer overflow
-    //}
-    //driver->writes[driver->wr_pos].reg = reg;
-    //driver->writes[driver->wr_pos].val = val;
-    //driver->wr_pos++;
 }
 
 
 static int musdriver_advance( mus_driver_t* mp, uint32_t opl_frames_needed );
 
-// OPL filter and Linear Interpolator
-// 1-pole LPF (first order, -6 dB/octave)
-
 static inline void musdriver_downsample_init(lpf_resample_t *rs, float in_rate, float out_rate, float cutoff_hz) {
-    rs->lpf = 1.0f - expf(-2.0f * PI * cutoff_hz / in_rate);
+    lpf_biquad_init(&rs->lpf, in_rate, cutoff_hz, OPL_BIQUAD_Q);
     rs->inc = in_rate / out_rate;  // e.g. 49716/44100 ≈ 1.1279
     rs->mu = 1.0f;
     rs->prev = 0.0f;
@@ -79,42 +68,43 @@ static inline void musdriver_downsample_init(lpf_resample_t *rs, float in_rate, 
 // request another out sample (assumes there is space)
 static inline int16_t musdriver_downsample_step(mus_driver_t* mp, lpf_resample_t *rs, int16_t *in, size_t *inSize, float volume)
 {
-        while (rs->mu >= 1.0f) {
-            rs->prev = rs->next;
-
-	    // next input sample
-            if (__builtin_expect(!!(rs->inN >= *inSize),0)) {
-		// this happens occasionally when we need one extra input sample
-		// to complete the downsampled output buffer.
-		if (!musdriver_advance(mp, 1)) {
-			return 0; // buffer overflow
-		}
-		*inSize += OPL_CHANNELS;
+    while (rs->mu >= 1.0f) {
+        // crossed sample boundary
+        if (__builtin_expect(!!(rs->inN >= *inSize),0)) {
+            // ran out of samples
+            // this happens occasionally when we need one extra input sample
+            // to complete the downsampled output buffer
+            if (!musdriver_advance(mp, 1)) {
+                return 0; // buffer overflow
+            }
+            *inSize += OPL_CHANNELS;
 	    }
+
+        // next input sample
 	    float samp = (float)(in[rs->inN]);
 	    rs->inN += OPL_CHANNELS;
+        rs->prev = rs->next; // previous input sample for linear interpolation
+        rs->next = lpf_biquad_step(&rs->lpf, samp); // next input sample
 
-            // 1st-order LPF
-            rs->next = rs->next + (samp - rs->next) * rs->lpf;
-
-            rs->mu -= 1.0;
-        }
+        // subtract one whole sample from mu interpolator
+        rs->mu -= 1.0;
+    }
 
 	// linear interpolation
-        float y = rs->prev + (rs->next - rs->prev) * rs->mu;
-        rs->mu += rs->inc;
+    float y = rs->prev + (rs->next - rs->prev) * rs->mu;
+    rs->mu += rs->inc;
 
-	// quantize
+	// apply volume, quantize
 	int iy = (int)(y * volume);
 
 	// clipping
-        if (iy > 0x7fff) {
-            iy = 0x7fff;
-        } else if (iy < -0x8000) {
-            iy = -0x8000;
-        }
+    if (iy > 0x7fff) {
+        iy = 0x7fff;
+    } else if (iy < -0x8000) {
+        iy = -0x8000;
+    }
 
-        return (int16_t)iy;
+    return (int16_t)iy;
 }
 
 static void musdriver_filter( mus_driver_t* mp, int16_t* mix_out, size_t mix_frames_needed, float volume ) {
@@ -141,29 +131,6 @@ static int musdriver_gen_opl( mus_driver_t* mp, uint32_t num_frames ) {
 	if (ofs + num_frames * OPL_CHANNELS > mp->opl_max_frames * OPL_CHANNELS) {
 		return 0; // buffer overflow
 	}
-	/*
-	if (mp->wr_pos) {
-		// there are pending register writes
-		uint32_t num_writes = mp->wr_pos <= num_frames ? mp->wr_pos : num_frames;
-		mus_reg_wr *writes = mp->writes;
-		for (i = 0; i < num_writes; i++) {
-			// write the next register
-			OPL3_WriteReg(&mp->opl3, writes->reg, writes->val);
-			writes++;
-			// advance the OPL player one sample
-			OPL3_Generate(&mp->opl3, buf + ofs);
-			ofs += OPL_CHANNELS;
-		}
-		if (mp->wr_pos == num_writes) {
-			mp->wr_pos = 0; // used all writes
-		} else {
-			mp->wr_pos -= num_writes;
-			// copy down remaining writes (not ideal)
-			memcpy(mp->writes, mp->writes + num_writes, sizeof(mus_reg_wr) * mp->wr_pos);
-		}
-		num_frames -= num_writes;
-	}
-	*/
 	for (i = 0; i < num_frames; i++) {
 		// advance the OPL player one sample
 		OPL3_Generate(&mp->opl3, buf + ofs);
@@ -231,13 +198,12 @@ void musdriver_start(mus_driver_t* mp, void* song, int loop) {
     musplay_start(&mp->player, song, loop);
     mp->playing = 1;
     mp->until_tick = 0;
-    mp->wr_pos = 0;
 }
 
 void musdriver_stop(mus_driver_t* mp) {
     if (mp->playing) {
         musplay_stop(&mp->player);
-	mp->playing = 0;
+	    mp->playing = 0;
     }
 }
 

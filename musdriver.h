@@ -27,14 +27,13 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "musplayer.h"
 #include "opl3.h"
 
-#include <stddef.h>
+#include "lpf_biquad.h"
 
-typedef struct { int reg, val; } mus_reg_wr;
-#define mus_max_regs 4096
+#include <stddef.h>
 
 // private
 typedef struct lpf_resample_s {
-    float lpf;      // low-pass filter smoothing coefficient
+    LPF_Biquad lpf; // low-pass filter
     float inc;      // out_rate / in_rate
     float mu;       // fractional position within current segment [0,1)
     float prev;     // previous filtered sample
@@ -52,10 +51,8 @@ typedef struct mus_driver_s {
 	uint32_t out_sample_rate; // output sample rate
 	uint32_t until_tick;      // frames until next music tick
 	int playing;              // musplayer is playing (cleared if score ends)
-	uint32_t wr_pos;          // write offset in writes
 	lpf_resample_t res_left;  // left channel resampling filter
 	lpf_resample_t res_right; // right channel resampling filter
-	mus_reg_wr writes[mus_max_regs];
 } mus_driver_t;
 
 uint32_t musdriver_opl_buf_size( uint32_t out_sample_rate, uint32_t out_max_frames );
