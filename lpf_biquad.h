@@ -9,9 +9,9 @@
 #include <math.h>
 
 typedef struct {
-    float b0, b1, b2; // feedforward
-    float a1, a2;     // feedback (a0 normalized to 1)
-    float z1, z2;     // state
+    float b0, b1;  // feedforward
+    float a1, a2;  // feedback (a0 normalized to 1)
+    float z1, z2;  // state
 } LPF_Biquad;
 
 static inline void lpf_biquad_init(LPF_Biquad *b, float sample_rate, float cutoff_hz, float Q) {
@@ -25,12 +25,10 @@ static inline void lpf_biquad_init(LPF_Biquad *b, float sample_rate, float cutof
     float a2 = 1.0f - alpha;
     float b0 = (1.0f - cw) * 0.5f;
     float b1 = 1.0f - cw;
-    float b2 = (1.0f - cw) * 0.5f;
 
     // normalize
     b->b0 = b0 / a0;
     b->b1 = b1 / a0;
-    b->b2 = b2 / a0;
     b->a1 = a1 / a0;
     b->a2 = a2 / a0;
 
@@ -40,7 +38,7 @@ static inline void lpf_biquad_init(LPF_Biquad *b, float sample_rate, float cutof
 static inline int lpf_biquad_step(LPF_Biquad *b, float x) {
     float y = b->b0 * x + b->z1;
     b->z1 = b->b1 * x - b->a1 * y + b->z2;
-    b->z2 = b->b2 * x - b->a2 * y;
+    b->z2 = b->b0 * x - b->a2 * y;
     return (int)y; // quantize
 }
 
