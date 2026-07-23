@@ -44,8 +44,8 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #define OPL_CHANNELS 2
 
 // Q factor for Butterworth LPF (~0.707)
-// use 0.6 to boost the low end a bit
-#define OPL_BIQUAD_Q 0.6
+// use 0.67 to boost the low end a bit
+#define OPL_BIQUAD_Q 0.671745f
 
 
 // Called by LittleMUS to write to Nuked-OPL3.
