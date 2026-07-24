@@ -41,6 +41,8 @@ With thanks to:
 
 #include <stdio.h>
 
+// #define MUS_DEBUG 1
+
 // This must be implemented by the program using musplayer.
 void adlib_write(musplayer_t* mp, int reg, int val);
 
@@ -187,7 +189,6 @@ static int8_t lfo_table[12*8] = {
 
 static void key_off_hw(musplayer_t* mp, int hw_ch) {
     if (mp->hw_voices[hw_ch].noteid >= 0) {
-        // printf("[MUS] *%d key off\n", hw_ch);
         int hw_cmd = mp->hw_voices[hw_ch].hw_cmd & opl3_mask_key_off; // clear key-on bit
         int B=0, ch = hw_ch; if (ch >= mus_bank_two) { ch -= mus_bank_two; B = 0x100; } // OPL3 2nd bank
         adlib_write(mp, (B|0xB0)+ch, (hw_cmd >> 8));    // clear register bit 5 (key-off)
@@ -236,7 +237,9 @@ static void key_off_note(musplayer_t* mp, int mus_ch, int note) {
     if (oldest_v0 >= 0) {
         key_off_hw(mp, oldest_v0);
     } else {
-        printf("[MUS] #%d key off note (%d) - not found\n", mus_ch, note);
+#if MUS_DEBUG
+        fprintf(stderr, "[MUS] #%d key off (%d) - not found\n", mus_ch, note);
+#endif
     }
     if (oldest_v1 >= 0) {
         key_off_hw(mp, oldest_v1);
@@ -263,12 +266,16 @@ static void load_hw_instrument(musplayer_t* mp, mus_hw_voice_t* hw, int hw_ch, i
     int ins = ins_sel & 0xFF;
     int vi = ins_sel >> 8;
     if (ins >= 175) {
-        printf("[MUS] *%d BAD instrument %d\n", hw_ch, ins);
+#if MUS_DEBUG
+        fprintf(stderr, "[MUS] *%d BAD instrument %d\n", hw_ch, ins);
+#endif
         return;
     }
     MUS_instrument* in = &mp->op2bank[ins];
     MUS_voice* v = &in->voice[vi]; // voice index 0/1 in bit 8 of instrument selector
-    // printf("[MUS] *%d load instrument %d-%d\n", hw_ch, ins, vi);
+#if MUS_DEBUG
+    fprintf(stderr, "[MUS] *%d load instrument %d-%d\n", hw_ch, ins, vi);
+#endif
     uint8_t modChar = v->modChar;
     uint8_t carChar = v->carChar;
     // software vibrato
@@ -283,7 +290,9 @@ static void load_hw_instrument(musplayer_t* mp, mus_hw_voice_t* hw, int hw_ch, i
             sw_vib = 1;
             modChar &= ~opl3_vibrato_bit;
         }
-        if (sw_vib) printf("[MUS] load instrument *%d with software vibrato\n", hw_ch);
+#if MUS_DEBUG
+        if (sw_vib) fprintf(stderr, "[MUS] *%d load instrument %d - software vibrato\n", hw_ch, ins);
+#endif
     }
     hw->sw_vib = sw_vib;
     int B=0, ch = hw_ch; if (ch >= mus_bank_two) { ch -= mus_bank_two; B = 0x100; } // OPL3 2nd bank
@@ -329,7 +338,9 @@ static void switch_to_sw_vib(musplayer_t* mp, int mus_ch) {
                 sw_vib = 1;
                 adlib_write(mp, (B|0x20)+chan_oper1[ch], (uint8_t)(v->modChar & ~opl3_vibrato_bit));
             }
-            if (sw_vib) printf("[MUS] switch *%d to software vibrato\n", hw_ch);
+#if MUS_DEBUG
+            if (sw_vib) fprintf(stderr, "[MUS] *%d switch to software vibrato\n", hw_ch);
+#endif
             mp->hw_voices[hw_ch].sw_vib = sw_vib;
         }
     }
@@ -404,7 +415,7 @@ static void set_hw_volume(musplayer_t* mp, mus_hw_voice_t* hw, int hw_ch, int ch
     int att2 = hw->lvl2 + v_att; if (att2 > 63) att2 = 63; else if (att2 < 0) att2 = 0;
     // Additive mode: operator 1 is summed with operator 2.
     if (hw->feedback&1) { att1 += v_att; if (att1 > 63) att1 = 63; else if (att1 < 0) att1 = 0; }
-    // printf("[MUS] *%d volume (%d) lvls %d %d %d #%d\n", hw_ch, hw->noteid, 63-att1, 63-att2, v_att, mus_ch);
+    //fprintf(stderr, "[MUS] *%d volume (%d) lvls %d %d %d\n", hw_ch, hw->noteid, 63-att1, 63-att2, v_att);
     int B=0, ch = hw_ch; if (ch >= mus_bank_two) { ch -= mus_bank_two; B = 0x100; } // OPL3 2nd bank
     adlib_write(mp, (B|0x40)+chan_oper1[ch], hw->ksl1|att1); // operator 1 attenuation + KSL
     adlib_write(mp, (B|0x40)+chan_oper2[ch], hw->ksl2|att2); // operator 2 attenuation + KSL
@@ -491,7 +502,9 @@ static int choose_hw_voice(musplayer_t* mp, int ins_sel, int mus_ch, int noteid)
     if (oldest_koff >= 0) { return oldest_koff; } // oldest keyed-off channel.
     // steal the lowest priority channel.
     // key-off the voice, otherwise OPL HW won't see a key-on.
-    printf("[MUS] *%d KILLED #%d - overflow\n", lowest, mp->hw_voices[lowest].mus_ch);
+#if MUS_DEBUG
+    fprintf(stderr, "[MUS] *%d KILLED #%d - overflow\n", lowest, mp->hw_voices[lowest].mus_ch);
+#endif
     key_off_hw(mp, lowest);
     return lowest;
 }
@@ -504,7 +517,9 @@ typedef struct prep_s {
 static prep_t prep_note(musplayer_t* mp, int ins_sel, int noteid, int note, int noteOfs, int note_att, int ch_att, int mus_ch, int bend, int pan) {
     int voice = choose_hw_voice(mp, ins_sel, mus_ch, noteid);
     if (voice < 0) {
-        printf("[MUS] #%d DROPPED note (%d) %d\n", mus_ch, noteid, note);
+#if MUS_DEBUG
+        fprintf(stderr, "[MUS] #%d DROPPED note (%d) %d\n", mus_ch, noteid, note);
+#endif
         prep_t ret = { -1, 0 };
         return ret; // drop the note.
     }
@@ -518,27 +533,31 @@ static prep_t prep_note(musplayer_t* mp, int ins_sel, int noteid, int note, int 
 
 static void mus_event(musplayer_t* mp, int ctrl, int value, int mus_ch, mus_channel_t* ch) {
     if (ctrl > 14) {
-        printf("[MUS] #%d BAD controller %d = %d\n", mus_ch, ctrl, value);
+#if MUS_DEBUG
+        fprintf(stderr, "[MUS] #%d BAD controller %d = %d\n", mus_ch, ctrl, value);
+#endif
         return;
     }
     switch (ctrl) {
         case ctrl_instrument:    // Change selected instrument (patch)
-            // printf("[MUS] #%d instrument = %d\n", mus_ch, value);
             if (value >= 175) {
-                printf("[MUS] #%d BAD instrument %d\n", mus_ch, value);
+#if MUS_DEBUG
+                fprintf(stderr, "[MUS] #%d BAD instrument %d\n", mus_ch, value);
+#endif
                 value = 0;
             }
             ch->ins_idx = value;
             ch->ins = &mp->op2bank[value];
             return;
         case ctrl_bank_select:   // Bank select: 0 by default
-            printf("[MUS] #%d bank select = %d\n", mus_ch, value);
+#if MUS_DEBUG
+            fprintf(stderr, "[MUS] #%d bank select = %d\n", mus_ch, value);
+#endif
             return;
         case ctrl_modulation:    // Modulation (frequency vibrato depth)
-            // printf("[MUS] #%d vibrato depth = %d\n", mus_ch, value);
-            // XXX this is a global HW setting; use this, or emulate it? what would PR do?
-            // adlib_write(0xbd, (value & 1) << 6);    // Vibrato Depth (bit 6)  XXX using bit 0
-            // printf("[MUS] #%d modulation = %d\n", mus_ch, value);
+#if MUS_DEBUG
+            fprintf(stderr, "[MUS] #%d vibrato depth = %d\n", mus_ch, value);
+#endif
             value = value >> 2;              // divide by 4
             if (value > 7) value = 7;        // LFO table contains 8 rows
             ch->modulation = value * opl3_lfo_steps; // LFO table row offset
@@ -556,41 +575,59 @@ static void mus_event(musplayer_t* mp, int ctrl, int value, int mus_ch, mus_chan
             // (I read somewhere that MUS allows >full volume)
             if (value > 127) value = 127; // must limit
             ch->vol_att = att_log_square[value];
-            // printf("[MUS] #%d volume = %d\n", mus_ch, value);
+#if MUS_DEBUG
+            fprintf(stderr, "[MUS] #%d volume = %d\n", mus_ch, value);
+#endif
             update_volume(mp, mus_ch, ch->vol_att + ch->exp_att, ch->pan_bits);
             return;
         case ctrl_pan:           // Pan (balance): 0-left, 64-center (default), 127-right
             ch->pan_bits = value <= 64-opl3_pan_threshold ? opl3_pan_left : (value >= 64+opl3_pan_threshold ? opl3_pan_right : opl3_pan_centre);
-            // printf("[MUS] #%d pan = %d\n", mus_ch, value);
+#if MUS_DEBUG
+            fprintf(stderr, "[MUS] #%d pan = %d\n", mus_ch, value);
+#endif
             update_volume(mp, mus_ch, ch->vol_att + ch->exp_att, ch->pan_bits);
             return;
         case ctrl_expression:    // Expression
             if (value > 127) value = 127; // must limit
             ch->exp_att = att_log_square[value];
-            printf("[MUS] #%d expression = %d\n", mus_ch, value);
+#if MUS_DEBUG
+            fprintf(stderr, "[MUS] #%d expression = %d\n", mus_ch, value);
+#endif
             update_volume(mp, mus_ch, ch->vol_att + ch->exp_att, ch->pan_bits);
             return;
         case ctrl_reverb:        // Reverb depth
-            printf("[MUS] #%d reverb = %d\n", mus_ch, value);
+#if MUS_DEBUG
+            fprintf(stderr, "[MUS] #%d reverb = %d\n", mus_ch, value);
+#endif
             return;
         case ctrl_chorus:        // Chorus depth
-            printf("[MUS] #%d chorus = %d\n", mus_ch, value);
+#if MUS_DEBUG
+            fprintf(stderr, "[MUS] #%d chorus = %d\n", mus_ch, value);
+#endif
             return;
         case ctrl_sustain:       // Sustain pedal (hold)
-            printf("[MUS] #%d sustain = %d\n", mus_ch, value);
+#if MUS_DEBUG
+            fprintf(stderr, "[MUS] #%d sustain = %d\n", mus_ch, value);
+#endif
             return;
         case ctrl_soft:          // Soft pedal
-            printf("[MUS] #%d soft = %d\n", mus_ch, value);
+#if MUS_DEBUG
+            fprintf(stderr, "[MUS] #%d soft = %d\n", mus_ch, value);
+#endif
             return;
 
         // SYSTEM messages
         // in midi these are "channel mode" (only affects one channel)
         case ctrl_all_sound_off: // All sounds off (silence immediately)
-            printf("[MUS] #%d all sound off\n", mus_ch);
+#if MUS_DEBUG
+            fprintf(stderr, "[MUS] #%d all sound off\n", mus_ch);
+#endif
             silence_mus_all(mp, mus_ch);
             return;
         case ctrl_all_notes_off: // All notes off (key off)
-            printf("[MUS] #%d all notes key-off\n", mus_ch);
+#if MUS_DEBUG
+            fprintf(stderr, "[MUS] #%d all notes key-off\n", mus_ch);
+#endif
             key_off_mus_all(mp, mus_ch);
             return;
         case ctrl_mono:          // Mono (one note per channel)
@@ -600,7 +637,9 @@ static void mus_event(musplayer_t* mp, int ctrl, int value, int mus_ch, mus_chan
             ch->mono = 0;
             return;
         case ctrl_reset_all:     // Reset all controllers on this channel
-            printf("[MUS] #%d reset all controllers\n", mus_ch);
+#if MUS_DEBUG
+            fprintf(stderr, "[MUS] #%d reset all controllers\n", mus_ch);
+#endif
             if (ch->vol_att != 0 || ch->exp_att != 0) {
                 ch->vol_att = 0;
                 ch->exp_att = 0;
@@ -614,7 +653,9 @@ static void mus_event(musplayer_t* mp, int ctrl, int value, int mus_ch, mus_chan
             ch->mono = 0;        // is POLY the default?
             return;
     }
-    printf("[MUS] #%d unknown controller %d = %d\n", mus_ch, ctrl, value);
+#if MUS_DEBUG
+    fprintf(stderr, "[MUS] #%d unknown controller %d = %d\n", mus_ch, ctrl, value);
+#endif
 }
 
 static void do_lfo(musplayer_t* mp) {
@@ -631,14 +672,15 @@ static void do_lfo(musplayer_t* mp) {
             mus_channel_t* chan = &mp->channels[hw->mus_ch];
             int mod = chan->modulation;
             if (mod % opl3_lfo_steps != 0) {
-                    printf("BUG: bad modulation %d on mus_ch %d", (int)mod, (int)hw->mus_ch);
-                    continue;
+#if MUS_DEBUG
+                fprintf(stderr, "BUG: bad modulation %d on mus_ch %d", (int)mod, (int)hw->mus_ch);
+#endif
+                continue;
             }
             // apply software vibrato (affects carrier, also modulator in Add-mode)
             int bend = chan->bend + lfo_table[mod + lfo_ofs]; // -1 row (1-based index)
             int hw_cmd = bend_pitch(mp, hw->p_note, bend, hw->fineTune); // see key_on
             hw_cmd |= (hw->hw_cmd & opl3_key_on); // add current key-on state
-            // printf("LFO: %d wr %x\n", hw_ch, hw_cmd);
             int B=0, ch = hw_ch; if (ch >= mus_bank_two) { ch -= mus_bank_two; B = 0x100; } // OPL3 2nd bank
             adlib_write(mp, (B|0xA0)+ch, hw_cmd & 255); // frequency low 8 bits
             adlib_write(mp, (B|0xB0)+ch, hw_cmd >> 8);  // frequency top 2 bits, octave (shift), key-on
@@ -653,7 +695,6 @@ int musplay_tick(musplayer_t* mp) {
     if (mp->delay > 1) { mp->delay--; mp->mus_time++; do_lfo(mp); return 1; } // use tick.
     // execute commands until the next delay.
     mp->mus_time++;
-    // printf("mus_time: %d\n", mp->mus_time);
     do {
         cmd = *mp->score++;
         int mus_ch = cmd & 15;
@@ -663,7 +704,6 @@ int musplay_tick(musplayer_t* mp) {
             case event_release: {
                 note = *mp->score++; // note number, top bit 0
                 key_off_note(mp, mus_ch, note);
-                // printf("[MUS] #%d release %d\n", chan, note);
                 break;
             }
             case event_note: {
@@ -722,7 +762,6 @@ int musplay_tick(musplayer_t* mp) {
                         hw_key_on(mp, p0.voice, p0.hw_cmd);
                     }
                 }
-                // printf("[MUS] #%d play %d vol %d\n", chan, note, vol);
                 break;
             }
             case event_pitch_wheel: {
@@ -730,7 +769,6 @@ int musplay_tick(musplayer_t* mp) {
                 int bend = (*mp->score++) - 128; // 8-bit value
                 ch->bend = bend;
                 bend_channel(mp, mus_ch, bend);
-                // printf("[MUS] #%d bend %d\n", mus_ch, bend);
                 break;
             }
             case event_system: {
@@ -750,7 +788,9 @@ int musplay_tick(musplayer_t* mp) {
             case event_end_of_measure:
                 break;
             case event_end_of_score: {
-                printf("[MUS] end of score\n");
+#if MUS_DEBUG
+                fprintf(stderr, "[MUS] end of score\n");
+#endif
                 if (mp->loop_score) {
                     mp->score = mp->loop_score;
                     return 1; // still playing (ignore remaining ticks)
@@ -850,7 +890,9 @@ void musplay_start(musplayer_t* mp, char* data, int loop) {
             adlib_write(mp, (b|0x40)+chan_oper1[ch], 63); // modulator, maximum attenuation
         }
     }
-    printf("\n\n\n[MUS] started playing\n");
+#if MUS_DEBUG
+    fprintf(stderr, "[MUS] started playing\n");
+#endif
 }
 
 void musplay_stop (musplayer_t* mp) {
