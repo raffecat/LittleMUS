@@ -456,11 +456,11 @@ static int choose_hw_voice(musplayer_t* mp, int ins_sel, int mus_ch, int noteid)
     int oldest_koff = -1;
     int oldest_idle = -1;
     int oldest_reuse = -1;
-    int lowest_mus = -1; // lowest priority MUS channel
+    int lowest_mus = 15; // lowest priority MUS channel
     int lowest = 0; // always valid
     for (int i = 0; i < mus_num_voices; i++) {
         // find the lowest priority voice.
-        if (mp->hw_voices[i].mus_ch > lowest_mus && mp->hw_voices[i].mus_ch < 15) { // avoid killing percussion
+        if (mp->hw_voices[i].mus_ch < lowest_mus && mp->hw_voices[i].mus_ch < 15) { // avoid killing percussion
             lowest_mus = mp->hw_voices[i].mus_ch;
             lowest = i;
         }
@@ -472,9 +472,9 @@ static int choose_hw_voice(musplayer_t* mp, int ins_sel, int mus_ch, int noteid)
                 oldest_koff_seq = koff_seq;
                 oldest_koff = i;
             }
-            if (mp->mus_time != mp->hw_voices[i].release) {
+            if (mp->mus_time >= mp->hw_voices[i].release) {
                 if (koff_seq < oldest_idle_seq) {
-                    // voice is the oldest fully key-off.
+                    // voice is the oldest fully keyed-off.
                     oldest_idle_seq = koff_seq;
                     oldest_idle = i;
                 }
